@@ -104,6 +104,9 @@ Files: `ui-orb.ts`, `index.ts`
 - Runtime command: `/orb auto|working|searching|solving|listening|composing|shaping|off|default`.
 - Maps agent/provider/message/tool lifecycle events to semantic states.
 - Supports reduced-motion and no-color paths.
+- Uses a subtle two-frame idle pulse only while the input is empty; typed input
+  keeps a stable idle token, and submitted work uses one accent-colored
+  expressive animation until completion.
 - Uses deterministic frames and no model-output parsing.
 
 ### 5. Deterministic tool lifecycle motion
@@ -114,6 +117,8 @@ Files: `ui-tools.ts`, `ui-motion.ts`
 - Queues built-in tool rows by `toolCallId`, animates pending rows through one
   shared clock, and settles each call into one compact status-first row without
   changing model-facing tool names or result payloads.
+- Pending frames occupy a fixed three-cell status slot, preventing tool targets
+  from shifting horizontally during animation.
 - Runtime command: `/motion live|0|1|2|3`.
 - Uses one shared motion clock, subscribed only while pending calls exist.
 - Disposes timers and tool-call slots on session shutdown.

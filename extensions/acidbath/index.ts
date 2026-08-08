@@ -67,6 +67,7 @@ class BorderlessEditor extends CustomEditor {
 	private readonly editorTheme: EditorTheme;
 	private readonly clock: MotionClock;
 	private orbState: EditorOrbState = "idle";
+	private inputEmpty = true;
 	private orbFrames: string[] = ["·  "];
 	private orbFrameIndex = 0;
 	private clockId = "editor-orb";
@@ -82,21 +83,42 @@ class BorderlessEditor extends CustomEditor {
 		super.setPaddingX(0);
 	}
 
+	override handleInput(data: string): void {
+		super.handleInput(data);
+		// Before submission, only an empty editor gets the subtle idle pulse.
+		// Once text exists, the orb is a stable token until agent_start arrives.
+		if (this.orbState === "idle" || this.orbState === "done") {
+			this.inputEmpty = this.getText().length === 0;
+			this.setOrbState("idle");
+		}
+	}
+
 	public setOrbState(state: EditorOrbState): void {
-		if (state === this.orbState && this.orbFrames.length > 1) return;
+		if (state === this.orbState && state !== "idle") return;
 		this.clock.unsubscribe(this.clockId);
 		this.orbState = state;
 		this.orbFrameIndex = 0;
 
-		if (state === "idle") this.orbFrames = ["·  "];
-		else if (state === "off") this.orbFrames = ["   "];
-		else if (state === "done") this.orbFrames = [this.editorTheme.borderColor("✓  ")];
+		if (state === "idle") {
+			const idleFrames = this.inputEmpty ? ["·  ", "· ·"] : ["·  "];
+			this.orbFrames = idleFrames.map((frame) => this.colorizeOrb(frame, false));
+			if (this.inputEmpty && !REDUCED_MOTION && idleFrames.length > 1) this.clock.subscribe(this.clockId, () => this.tui.requestRender());
+		} else if (state === "off") this.orbFrames = ["   "];
+		else if (state === "done") this.orbFrames = [this.colorizeOrb("✓  ", true)];
 		else {
-			const indicator = indicatorFor(state, REDUCED_MOTION, COLOR_ENABLED);
-			this.orbFrames = indicator.frames;
+			// Use one expressive active animation in a distinct accent color. The
+			// semantic lifecycle remains in labels/tool rows, not in orb churn.
+			const indicator = indicatorFor("working", REDUCED_MOTION, false);
+			this.orbFrames = indicator.frames.map((frame) => this.colorizeOrb(frame, true));
 			if (!REDUCED_MOTION && indicator.frames.length > 1) this.clock.subscribe(this.clockId, () => this.tui.requestRender());
 		}
 		this.tui.requestRender();
+	}
+
+	private colorizeOrb(frame: string, active: boolean): string {
+		if (!COLOR_ENABLED) return frame;
+		if (active) return this.editorTheme.borderColor(frame);
+		return `\x1b[38;5;240m${frame}\x1b[39m`;
 	}
 
 	override render(width: number): string[] {
@@ -119,7 +141,9 @@ class BorderlessEditor extends CustomEditor {
 	}
 
 	private frameIndex(): number {
-		return this.orbFrames.length <= 1 ? 0 : this.clock.currentPhase() % this.orbFrames.length;
+		if (this.orbFrames.length <= 1) return 0;
+		const phase = this.orbState === "idle" ? Math.floor(this.clock.currentPhase() / 2) : this.clock.currentPhase();
+		return phase % this.orbFrames.length;
 	}
 }
 
@@ -352,13 +376,20 @@ export default function acidbath(pi: ExtensionAPI): void {
 			editorWidget.setOrbState(activeLabel?.orbState ?? "idle");
 			return editorWidget;
 		});
-		ctx.ui.setHeader(
+		const installHeader = (): void => {
+			ctx.ui.setHeader(
 			(tui, theme) => {
 				const header = new AcidbathHeader(tui, theme, ctx.model?.name, ctx.cwd, !COLOR_ENABLED);
 				headerWidget = header;
 				return header;
 			},
-		);
+			);
+		};
+		// Some Pi builds initialize the built-in header immediately after the
+		// session_start callback. Retry on the next microtask so setHeader is not
+		// lost to that initialization order.
+		installHeader();
+		queueMicrotask(installHeader);
 		ctx.ui.setFooter((tui, theme) => {
 			const footer = new AcidbathFooter(tui, theme, ctx.cwd, !COLOR_ENABLED);
 			footerWidget = footer;

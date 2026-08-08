@@ -2,7 +2,9 @@
 
 export type ToolMotionState = "pending" | "success" | "error";
 
-export const TOOL_PENDING_FRAMES = ["·", "∙", "●", "∙"] as const;
+// Every pending frame is three visible cells so the tool target never shifts
+// horizontally while the animation advances.
+export const TOOL_PENDING_FRAMES = ["...", "·  ", "∙  ", "●  "] as const;
 export const TOOL_SUCCESS_GLYPH = "✓";
 export const TOOL_ERROR_GLYPH = "×";
 export const TOOL_MOTION_INTERVAL_MS = 100;

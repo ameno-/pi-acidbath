@@ -52,7 +52,9 @@ for (const width of [40, 60, 80, 120]) {
   const row = formatToolRow({ width, toolName: "bash", target: "bun test && bun run lint", status: "pending", phase: 2, metadata: ["running"], expandable: true });
   assert(`tool row width ${width}`, toolRowVisibleWidth(row) <= width, row);
 }
-assert("tool success status survives plain text", formatToolRow({ width: 60, toolName: "edit", target: "src/app.ts", status: "success", metadata: ["+3 -1"] }).startsWith("ok edit"));
+const phaseRows = [0, 1, 2, 3].map((phase) => formatToolRow({ width: 60, toolName: "grep", target: "src", status: "pending", phase }));
+assert("pending tool target stays aligned", phaseRows.every((row) => row.indexOf("grep") === phaseRows[0].indexOf("grep")));
+assert("tool success status survives plain text", formatToolRow({ width: 60, toolName: "edit", target: "src/app.ts", status: "success", metadata: ["+3 -1"] }).startsWith("ok  edit"));
 assert("tool error expansion survives plain text", formatToolRow({ width: 60, toolName: "edit", target: "src/app.ts", status: "error", metadata: ["old text not found"], expandable: true }).includes("expand"));
 const wideRow = formatToolRow({ width: 40, toolName: "read", target: "資料/編集.ts", status: "success", metadata: ["214 lines"], expandable: true });
 assert("wide unicode row remains width-safe", toolRowVisibleWidth(wideRow) <= 40, wideRow);

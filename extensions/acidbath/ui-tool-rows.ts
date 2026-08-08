@@ -16,7 +16,13 @@ export interface ToolRowFormatInput {
 
 export function formatToolRow(input: ToolRowFormatInput): string {
 	const width = Math.max(1, Math.trunc(input.width));
-	const status = input.status === "success" ? "ok" : input.status === "error" ? "ERR" : input.reducedMotion ? "..." : ["...", "∙", "●", "∙"][normalize(input.phase ?? 0)]!;
+	const status = input.status === "success"
+		? "ok "
+		: input.status === "error"
+			? "ERR"
+			: input.reducedMotion
+				? "..."
+				: ["...", "·  ", "∙  ", "●  "][normalize(input.phase ?? 0)]!;
 	const tool = clean(input.toolName) || "tool";
 	const target = clean(input.target) || "?";
 	const required = `${status} ${tool} ${target}`;
