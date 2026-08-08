@@ -35,6 +35,7 @@ interface ToolRowState {
 	startedAt: number;
 	durationMs?: number;
 	truncated: boolean;
+	settled: boolean;
 	callInvalidate?: () => void;
 }
 
@@ -124,11 +125,15 @@ function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDeta
 			const row = getOrCreateRow(rows, context.toolCallId, definition.name, args as Record<string, unknown>);
 			// A call slot is always pending until its result slot settles; Pi may
 			// invoke renderCall with isPartial=false before execution completes.
-			row.status = context.isError ? "error" : "pending";
-			row.target = targetForTool(definition.name, row.args);
-			row.callInvalidate = context.invalidate;
-			if (row.status === "pending") clock.subscribe(context.toolCallId, context.invalidate);
-			else clock.unsubscribe(context.toolCallId);
+			// Once settled, do not reinstall the invalidation callback during the
+			// redraw that hides this call slot.
+			if (!row.settled) {
+				row.status = context.isError ? "error" : "pending";
+				row.target = targetForTool(definition.name, row.args);
+				row.callInvalidate = context.invalidate;
+				if (row.status === "pending") clock.subscribe(context.toolCallId, context.invalidate);
+				else clock.unsubscribe(context.toolCallId);
+			}
 			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, undefined, false, true);
 		},
 		renderResult(result, options, theme, context) {
@@ -140,6 +145,7 @@ function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDeta
 			});
 			const row = getOrCreateRow(rows, context.toolCallId, definition.name, context.args as Record<string, unknown>);
 			row.status = context.isError ? "error" : options.isPartial ? "pending" : "success";
+			row.settled = !options.isPartial;
 			row.target = targetForTool(definition.name, row.args);
 			if (!options.isPartial && row.durationMs === undefined) row.durationMs = Math.max(0, Date.now() - row.startedAt);
 			row.metadata = options.isPartial
@@ -189,6 +195,7 @@ function getOrCreateRow(
 		metadata: ["pending"],
 		startedAt: Date.now(),
 		truncated: false,
+		settled: false,
 	};
 	rows.set(toolCallId, row);
 	return row;
