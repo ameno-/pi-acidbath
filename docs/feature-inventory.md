@@ -122,8 +122,10 @@ Files: `ui-tools.ts`, `ui-motion.ts`
 - Runtime command: `/motion live|0|1|2|3`.
 - Uses one shared motion clock, subscribed only while pending calls exist.
 - Disposes timers and tool-call slots on session shutdown.
-- External tools such as `agy_web_search` are not currently wrapped; they still
-  receive the semantic working state through the label path.
+- AGY research tools are bundled from pinned `ameno-/pi-research` and register
+  `agy_web_search`, `agy_research`, and `/agy-setup` as core capabilities.
+  They receive semantic working state through the generic event label path;
+  Acidbath does not replace their executor or mutate AGY permissions silently.
 
 ### 6. Deterministic labels
 
@@ -186,7 +188,8 @@ Files: `themes/*.json`
 8. Decide whether auto-collapse belongs in Acidbath after expansion behavior is
    tested.
 9. Add a mode/profile layer only after the core UI contract is stable.
-10. Keep `pi-research` opt-in until AGY permission and output controls improve.
+10. Keep AGY permission changes explicit: `pi-research` is a bundled core
+    capability, but AGY authentication and `command(*)` approval remain human-gated.
 
 ## Intended non-goals
 

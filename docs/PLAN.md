@@ -17,7 +17,7 @@ Companion visuals (open in a browser):
 
 Applied from your answers on 2026-08-06. Where these conflict with later sections, this block wins.
 
-1. **Subagents: `pi-subagents` is the delegation surface.** Do **not** vendor or use `agy` from pi-herdr at all — it will be folded into your separate agent-delegation system later. **Consequence:** `research-bridge` is also dropped (it drives the AGY master pane and cannot stand alone). The vendored "heritage" set from pi-herdr is now **scheduler + cockpit only** (both render-only/state).
+1. **Delegation and research are separate surfaces.** `pi-subagents` remains the delegation surface. AGY is not vendored from pi-herdr; the canonical `ameno-/pi-research` package is now bundled into Acidbath as the core web-research surface. `research-bridge` remains dropped because it depends on the AGY master pane. The vendored "heritage" set from pi-herdr is **scheduler + cockpit only** (both render-only/state).
 2. **`web_search` is dropped** (orphan). The `explore` profile no longer lists it; web work goes through the `agent-browser` skill and `pi-subagents` researcher lanes.
 3. **`pi-codex-tools` `apply_patch` is kept** and auto-disables on macOS (it already fails-closed on non-Linux). The portable streaming-render pattern ships everywhere.
 4. **Eval rubric = scored-matrix-only first pass** (compat/maintenance/license/security/perf/operational-risk per tool). No `measure.sh` objective benchmark yet — added later if needed.
@@ -38,7 +38,7 @@ Profile tool sets after reconciliation:
 
 ## 1. Executive Brief
 
-Acidbath is today a clean, deterministic, event-driven Pi UI package (acidbath header, semantic orb, tool lifecycle motion, optional context pyramid, theme) extracted from `pi-herdr`. You chose to make it the **umbrella**: one package that owns UI + absorbs selected pi-herdr extensions (scheduler, cockpit, research-bridge, agy) + wires skills + adds custom tool rendering and topology profiles, while keeping global discovery blocked for safety.
+Acidbath is a clean, deterministic, event-driven Pi UI package (acidbath header, semantic orb, tool lifecycle motion, optional context pyramid, theme) extracted from `pi-herdr`. It is the **umbrella**: one package that owns UI, bundles the canonical `ameno-/pi-research` AGY research capability, wires skills, and adds custom tool rendering and topology profiles. AGY execution remains explicit and permission-gated.
 
 Three findings drive the plan:
 
@@ -289,7 +289,7 @@ symlinks; and global discovery remains blocked.
 | `pi-codex-tools` apply_patch + streaming render | **Adopt pattern (P2)** | Codex-native patches + live diff preview | Streaming scanner | Linux-only for apply_patch; render pattern portable | Keep edit/write wrappers |
 | `pix-bash` framed+collapse pattern | **Adopt pattern (P2)** | Readable output, reclaim space | One timer/completed call | Timer leaks | Default collapse off |
 | `pi-lens` | **Adopt (P3, debug-scoped)** | Real-time LSP/linter/formatter diagnostics | LSP server mgmt (gated) | Heavy if unscoped; gated to `debug` profile | Disable in non-debug profiles |
-| `agy` (from pi-herdr) | **Reject (don't use directly)** | — | — | Superseded by pi-subagents now + your agent-delegation system later | Don't vendor |
+| `agy` (from pi-herdr) | **Reject as an executor source** | — | — | Superseded by canonical `pi-research` | Use bundled `pi-research` instead |
 | `research-bridge` (from pi-herdr) | **Drop** | — | — | Depends on AGY master pane; can't stand alone without agy | Use pi-subagents researcher instead |
 | `web_search` tool | **Drop (orphan)** | — | — | Not a verified built-in; orphaned | Web work via agent-browser skill |
 | `pi-codex-tools` apply_patch on macOS | **Keep, auto-disable** | Codex-native patches on Linux | None on macOS (inactive) | Already fails-closed on non-Linux | Pattern (streaming render) ships everywhere |

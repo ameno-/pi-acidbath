@@ -111,7 +111,7 @@ Pi package postinstall hook that silently changes global settings.
 | `pi-ast-grep` | Separate active package with documented controls | Keep separate; expose status in header/welcome only if useful |
 | `pi-interactive-shell` | Separate active package | Keep separate; Acidbath should render generic delegated-tool rows later |
 | `visual-explainer` | Separate package and prototype workflow | Keep separate; use it to review Acidbath visuals |
-| `pi-research` | Reviewed, not enabled by default | Opt-in only until AGY permissions and output limits are hardened |
+| `pi-research` | Bundled core capability | AGY authentication and permission changes remain explicit; Acidbath does not auto-grant `command(*)` |
 | Skills | Canonical in `ameno-/lib` | Add Pi as a generated deployment target, not a vendored dependency |
 | Animation | Research-only handoff/prototype | Keep local and dependency-free; no production wiring yet |
 

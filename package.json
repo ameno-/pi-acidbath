@@ -20,12 +20,19 @@
   "publishConfig": {
     "access": "public"
   },
+  "dependencies": {
+    "pi-research": "git+https://github.com/ameno-/pi-research.git#c678f7927dcf8edb133de8c4c345f4b69c65cefc"
+  },
+  "bundledDependencies": [
+    "pi-research"
+  ],
   "scripts": {
-    "test": "node --experimental-strip-types --no-warnings scripts/test-context-pyramid.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-labels.mjs && node --experimental-strip-types --no-warnings scripts/test-token-context.mjs"
+    "test": "node --experimental-strip-types --no-warnings scripts/test-package-manifest.mjs && node --experimental-strip-types --no-warnings scripts/test-context-pyramid.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-labels.mjs && node --experimental-strip-types --no-warnings scripts/test-token-context.mjs"
   },
   "pi": {
     "extensions": [
-      "./extensions/acidbath/index.ts"
+      "./extensions/acidbath/index.ts",
+      "./node_modules/pi-research/extension/index.ts"
     ],
     "themes": [
       "./themes/*.json"
