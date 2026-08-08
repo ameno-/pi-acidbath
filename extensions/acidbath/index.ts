@@ -9,13 +9,12 @@
 
 import {
 	CustomEditor,
-	type EditorTheme,
 	type ExtensionAPI,
 	type ExtensionContext,
 	type KeybindingsManager,
-	type TUI,
 	type WorkingIndicatorOptions,
 } from "@earendil-works/pi-coding-agent";
+import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { ContextPyramidWidget, parseContextPlacement, type ContextPlacement } from "./ui-context-widget.js";
 import { AcidbathFooter } from "./ui-footer.js";
 import { findEditorBottomBorderIndex } from "./ui-gauge.js";
@@ -109,8 +108,9 @@ class BorderlessEditor extends CustomEditor {
 			// Use one expressive active animation in a distinct accent color. The
 			// semantic lifecycle remains in labels/tool rows, not in orb churn.
 			const indicator = indicatorFor("working", REDUCED_MOTION, false);
-			this.orbFrames = indicator.frames.map((frame) => this.colorizeOrb(frame, true));
-			if (!REDUCED_MOTION && indicator.frames.length > 1) this.clock.subscribe(this.clockId, () => this.tui.requestRender());
+			const frames = indicator.frames ?? ["·  "];
+			this.orbFrames = frames.map((frame) => this.colorizeOrb(frame, true));
+			if (!REDUCED_MOTION && frames.length > 1) this.clock.subscribe(this.clockId, () => this.tui.requestRender());
 		}
 		this.tui.requestRender();
 	}
@@ -325,7 +325,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 	const pushFinalUsage = (messages: readonly unknown[]): void => {
 		const assistant = [...messages].reverse().find((message) => {
 			if (!message || typeof message !== "object") return false;
-			return (message as Record<string, unknown>).role === "assistant";
+			return (message as unknown as Record<string, unknown>).role === "assistant";
 		}) as Record<string, unknown> | undefined;
 		const usage = assistant && typeof assistant.usage === "object" && assistant.usage !== null
 			? assistant.usage as Record<string, unknown>
@@ -449,7 +449,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 		updateLabel({ event: "agent_end" }, ctx);
 		const endedWithError = event.messages.some((message) => {
 			if (!message || typeof message !== "object") return false;
-			const stopReason = (message as Record<string, unknown>).stopReason;
+			const stopReason = (message as unknown as Record<string, unknown>).stopReason;
 			return stopReason === "error" || stopReason === "aborted";
 		});
 		dispatchTokenEvent({ type: "agent_end", outcome: endedWithError ? "error" : "success" });

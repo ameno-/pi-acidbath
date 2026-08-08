@@ -26,8 +26,12 @@
   "bundledDependencies": [
     "pi-research"
   ],
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
   "scripts": {
-    "test": "node --experimental-strip-types --no-warnings scripts/test-package-manifest.mjs && node --experimental-strip-types --no-warnings scripts/test-context-pyramid.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-labels.mjs && node --experimental-strip-types --no-warnings scripts/test-token-context.mjs"
+    "test": "node --experimental-strip-types --no-warnings scripts/test-package-manifest.mjs && node --experimental-strip-types --no-warnings scripts/test-context-pyramid.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-labels.mjs && node --experimental-strip-types --no-warnings scripts/test-token-context.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-summary.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "pi": {
     "extensions": [

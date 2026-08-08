@@ -217,7 +217,7 @@ export function renderTokenContext(
 function railCells(state: TokenContextState, slots: number, reducedMotion: boolean): string {
 	const percent = state.facts?.contextPercent ?? 0;
 	const filled = Math.round(Math.max(0, Math.min(1, percent)) * slots);
-	const cells = Array.from({ length: slots }, (_, index) => index < filled ? "●" : "·");
+	const cells: string[] = Array.from({ length: slots }, (_, index) => index < filled ? "●" : "·");
 	if (!reducedMotion && state.pendingBubbles > 0 && state.bubbleDirection) {
 		const position = state.bubbleDirection === "in"
 			? Math.min(slots - 1, filled + (state.frameIndex % Math.max(1, slots - filled)))
