@@ -20,11 +20,12 @@ Pi's domain renderers, or choose a compact/rich policy per tool.
 ## Implementation status
 
 Phase 1 is now implemented in `ui-tools.ts` and `ui-tool-renderers.ts`:
-Acidbath has one presentation policy — compact lifecycle rows by default, with
-Pi's native renderer retained as the expansion body. Renderer state is stored in
-Pi's per-call `context.state`, and native detail components are reused separately
+Acidbath has one presentation policy — compact lifecycle rows by default, with bounded result previews (up to four lines) and Pi's native
+renderer retained as the expansion body. Renderer state is stored in Pi's
+per-call `context.state`, and native detail components are reused separately
 from the compact wrapper. TypeScript checking is now a first-class `npm run
-typecheck` command.
+typecheck`
+command.
 
 ## What oh-my-pi does well
 

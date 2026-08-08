@@ -24,6 +24,8 @@ interface ToolRowState {
 	settled: boolean;
 	callInvalidate?: () => void;
 	nativeDetails?: Component;
+	previewLines: string[];
+	previewHidden: number;
 }
 
 interface AcidbathRendererState {
@@ -62,6 +64,8 @@ class ToolRowComponent implements Component {
 	private readonly reducedMotion: boolean;
 	private readonly noColor: boolean;
 	private readonly details: Component | undefined;
+	private readonly previewLines: string[];
+	private readonly previewHidden: number;
 	private readonly expanded: boolean;
 	private readonly hideWhenSettled: boolean;
 
@@ -72,6 +76,8 @@ class ToolRowComponent implements Component {
 		reducedMotion: boolean,
 		noColor: boolean,
 		details: Component | undefined,
+		previewLines: readonly string[],
+		previewHidden: number,
 		expanded: boolean,
 		hideWhenSettled = false,
 	) {
@@ -81,6 +87,8 @@ class ToolRowComponent implements Component {
 		this.reducedMotion = reducedMotion;
 		this.noColor = noColor;
 		this.details = details;
+		this.previewLines = [...previewLines];
+		this.previewHidden = previewHidden;
 		this.expanded = expanded;
 		this.hideWhenSettled = hideWhenSettled;
 	}
@@ -103,6 +111,16 @@ class ToolRowComponent implements Component {
 			? plain
 			: `${this.theme.fg(this.row.status === "error" ? "error" : this.row.status === "success" ? "success" : "dim", plain.slice(0, statusWidth))}${plain.slice(statusWidth)}`;
 		const lines = [truncateToWidth(styled, width)];
+		if (!this.expanded && this.previewLines.length > 0) {
+			const previewColor = this.row.status === "error" ? "error" : "toolOutput";
+			for (const line of this.previewLines) {
+				lines.push(truncateToWidth(`${this.theme.fg("dim", "└ ")}${this.theme.fg(previewColor, line)}`, width));
+			}
+			if (this.previewHidden > 0) {
+				const noun = this.previewHidden === 1 ? "line" : "lines";
+				lines.push(truncateToWidth(`${this.theme.fg("dim", "└ ")}… ${this.previewHidden} more ${noun} · expand`, width));
+			}
+		}
 		if (this.expanded && this.details) {
 			for (const line of this.details.render(Math.max(1, width))) lines.push(truncateToWidth(line, width));
 		}
@@ -142,6 +160,8 @@ function getOrCreateRow(
 		startedAt: Date.now(),
 		truncated: false,
 		settled: false,
+		previewLines: [],
+		previewHidden: 0,
 	};
 	state.acidbathToolRow = row;
 	return row;
@@ -177,7 +197,7 @@ export function createCompactToolRenderers(
 				if (row.status === "pending") clock.subscribe(context.toolCallId, context.invalidate);
 				else clock.unsubscribe(context.toolCallId);
 			}
-			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, undefined, false, true);
+			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, undefined, [], 0, false, true);
 		},
 
 		renderResult(
@@ -204,6 +224,9 @@ export function createCompactToolRenderers(
 				? ["running"]
 				: metadataForTool(definition.name, row.args, result as Record<string, unknown>, row.durationMs);
 			row.truncated = hasTruncation(result as Record<string, unknown>);
+			const preview = previewForResult(definition.name, result);
+			row.previewLines = preview.lines;
+			row.previewHidden = preview.hidden;
 			if (row.status === "pending") {
 				clock.subscribe(context.toolCallId, context.invalidate);
 			} else {
@@ -230,9 +253,32 @@ export function createCompactToolRenderers(
 					row.nativeDetails = undefined;
 				}
 			}
-			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, row.nativeDetails, resultOptions.expanded);
+			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, row.nativeDetails, row.previewLines, row.previewHidden, resultOptions.expanded);
 		},
 	};
+}
+
+function previewForResult(toolName: string, result: Record<string, unknown>): { lines: string[]; hidden: number } {
+	const details = isRecord(result.details) ? result.details : {};
+	const displayContent = isRecord(details.displayContent) ? details.displayContent.text : undefined;
+	const content = typeof displayContent === "string"
+		? displayContent
+		: Array.isArray(result.content)
+			? result.content
+				.filter((part): part is Record<string, unknown> => isRecord(part) && part.type === "text" && typeof part.text === "string")
+				.map((part) => part.text as string)
+				.join("\n")
+			: "";
+	if (!content.trim()) return { lines: [], hidden: 0 };
+
+	const rawLines = content.replace(/\r\n?/g, "\n").split("\n");
+	const lines = rawLines.map((line) => line.replace(/[\t]+/g, "    ").trimEnd());
+	while (lines.length > 0 && lines[0]!.trim() === "") lines.shift();
+	while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
+	const limit = 4;
+	const visible = toolName === "bash" ? lines.slice(-limit) : lines.slice(0, limit);
+	const hidden = Math.max(0, lines.length - visible.length);
+	return { lines: visible, hidden };
 }
 
 function targetForTool(toolName: string, args: Record<string, unknown>): string {
