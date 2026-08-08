@@ -149,9 +149,13 @@ function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDeta
 			if (row.status === "pending") clock.subscribe(context.toolCallId, context.invalidate);
 			else {
 				clock.unsubscribe(context.toolCallId);
-				// The call slot owns the pending row. Invalidate it immediately so
-				// the settled result slot is the only compact row on screen.
-				row.callInvalidate?.();
+				// The call slot owns the pending row. Invalidate it after the current
+				// result render; doing this synchronously re-enters Pi's renderer and
+				// can create an infinite redraw loop. Clear the callback first so a
+				// result rerender cannot schedule it repeatedly.
+				const invalidateCall = row.callInvalidate;
+				row.callInvalidate = undefined;
+				if (invalidateCall) queueMicrotask(invalidateCall);
 			}
 
 			// The stock renderer is retained only as an explicitly expanded detail
