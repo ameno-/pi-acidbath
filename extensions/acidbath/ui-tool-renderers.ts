@@ -113,8 +113,10 @@ class ToolRowComponent implements Component {
 		const lines = [truncateToWidth(styled, width)];
 		if (!this.expanded && this.previewLines.length > 0) {
 			const previewColor = this.row.status === "error" ? "error" : "toolOutput";
-			for (const line of this.previewLines) {
-				lines.push(truncateToWidth(`${this.theme.fg("dim", "└ ")}${this.theme.fg(previewColor, line)}`, width));
+			const previewRows = this.previewLines.length + (this.previewHidden > 0 ? 1 : 0);
+			for (let index = 0; index < this.previewLines.length; index++) {
+				const branch = index === previewRows - 1 ? "└ " : "├ ";
+				lines.push(truncateToWidth(`${this.theme.fg("dim", branch)}${this.theme.fg(previewColor, this.previewLines[index]!)}`, width));
 			}
 			if (this.previewHidden > 0) {
 				const noun = this.previewHidden === 1 ? "line" : "lines";
