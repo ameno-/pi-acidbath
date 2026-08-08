@@ -1,0 +1,94 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Acidbath — Implementation Roadmap</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+:root{--void:#0a0a0f;--teal:#00d4aa;--magenta:#ff0080;--acid:#39ff14;--amber:#ffb800;--purple:#bd00ff;--pink:#ff2a6d;--txt:#cfeee6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--void);color:var(--txt);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:32px 20px 80px}
+h1{font-size:26px;color:var(--teal);margin:0 0 4px}
+h2{font-size:19px;color:var(--amber);margin:42px 0 10px;border-bottom:1px solid #1a1a2e;padding-bottom:6px}
+.sub{color:#7fa;opacity:.8;margin:0 0 24px}
+.mermaid{background:#0c0c12;border:1px solid #142b26;border-radius:10px;padding:18px;margin:14px 0;overflow-x:auto}
+.card{background:#0f0f17;border:1px solid #142b26;border-radius:10px;padding:14px 18px;margin:14px 0}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0}
+th,td{border:1px solid #142b26;padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#12121c;color:var(--teal)}
+.win{color:var(--acid)} .lose{color:var(--pink)} .warn{color:var(--amber)}
+footer{color:#567;margin-top:40px;font-size:12px}
+</style></head><body><div class="wrap">
+<h1>Implementation Roadmap — 5 Phases</h1>
+<p class="sub">Implementation in progress; visual appearance remains human-gated. Each phase has explicit exit criteria and a rollback. Highest risk (P4 eval/sandbox) is last.</p>
+
+<h2>1. Phase timeline</h2>
+<div class="mermaid">
+gantt
+    title Acidbath umbrella rollout
+    dateFormat  YYYY-MM-DD
+    axisFormat  %b
+    section P0 Instrument
+    Perf harness + baselines        :p0a, 2026-08-11, 3d
+    Unblock visual-explainer        :p0b, 2026-08-11, 1d
+    Clean dead packages             :p0c, 2026-08-12, 1d
+    section P1 Deterministic UI
+    ui-labels.ts pure synth         :p1a, after p0a, 3d
+    Wire apply() + churn guard      :p1b, after p1a, 2d
+    Tool-renderer label hook        :p1c, after p1b, 2d
+    section P2 Tool wrappers/perf
+    Framed output + collapse        :p2a, after p1c, 4d
+    Streaming diff preview          :p2b, after p2a, 3d
+    pi-codex-compaction adopt       :p2c, after p2a, 1d
+    pi-codex-tools apply_patch      :p2d, after p2b, 2d
+    section P3 Extension integrations
+    Vendor pi-herdr heritage        :p3a, after p2d, 5d
+    config/profiles.json + launcher :p3b, after p3a, 3d
+    pi-subagents adopt              :p3c, after p3a, 2d
+    pi-ast-grep adopt               :p3d, after p3a, 1d
+    /topology command               :p3e, after p3b, 1d
+    section P4 Sandbox/eval
+    tool-evals/ on autoresearch     :p4a, after p3e, 5d
+    scored matrix per tool          :p4b, after p4a, 4d
+    (study) metaharness trace model :p4c, after p4a, 3d
+</div>
+
+<h2>2. Phase detail</h2>
+<table>
+<tr><th>Phase</th><th>Goal</th><th>Key items</th><th>Exit criteria</th><th>Risk / rollback</th></tr>
+<tr><td><b>P0</b><br>Instrument</td><td>Measure before changing</td><td>perf harness; baseline metrics; unblock visual-explainer; clean dead packages</td><td>baselines in <code>docs/baselines.md</code>; visual-explainer renders</td><td class="win">Low — revert settings entry</td></tr>
+<tr><td><b>P1</b><br>Deterministic UI</td><td>V1 labels</td><td><b>Complete:</b> <code>ui-labels.ts</code> pure helper; <code>apply()</code> wiring; churn guard + 100ms debounce; renderer label hook</td><td>unit tests pass; churn benchmark ≤1/100ms; debounce timer cleared on shutdown</td><td class="win">Low — keep <code>ORB_LABELS</code> path</td></tr>
+<tr><td><b>P2</b><br>Tool wrappers</td><td>Rendering + compaction</td><td>framed output + auto-collapse + streaming diff; adopt pi-codex-compaction; (opt) apply_patch</td><td>§5 thresholds met; 0 leaked timers; streaming parity 100%</td><td class="warn">Medium — keep current <code>registerToolMotionRenderers</code></td></tr>
+<tr><td><b>P3</b><br>Integrations</td><td>Umbrella consolidation</td><td>vendor scheduler+cockpit only (agy/research-bridge dropped → pi-subagents); <code>profiles.json</code>+launcher; pi-subagents; pi-ast-grep; pi-lens (debug); skills via manifest+symlinks</td><td><code>/topology</code> works; no <code>/orb</code> collision; profiles load via explicit flags; pi-lens gated to debug</td><td class="warn">Med-High — drop heritage entries</td></tr>
+<tr><td><b>P4</b><br>Sandbox/eval</td><td>Tool evals + scored rubric</td><td><code>config/tool-evals/</code> on autoresearch model; per-tool <b>scored matrix</b> first pass; MAD confidence later; (study) metaharness</td><td>one scored matrix per adopted tool; confidence when benchmarks added</td><td class="lose">High — additive; disable profile</td></tr>
+</table>
+
+<h2>3. Risk controls & do-not-adopt decisions</h2>
+<div class="mermaid">
+flowchart LR
+  subgraph DNR["Do-not-adopt / reject"]
+    R1["pi-herdr-ui.ts\n(/orb /motion collision)"]:::lose
+    R2["V2 thinking-block labels\n(non-deterministic)"]:::lose
+    R3["In-band /topology switch\n(setActiveTools additive-only)"]:::lose
+    R4["pi-minimax-mcp\n(needs peer-dep migration)"]:::lose
+    R5["agy + research-bridge\n(→ pi-subagents)"]:::lose
+    R6["web_search tool (orphan)"]:::lose
+  end
+  subgraph RC["Risk controls"]
+    C1["global discovery stays blocked\n(--no-extensions baseline)"]:::win
+    C2["profile self-check at session_start"]:::win
+    C3["every recommendation has a rollback"]:::win
+    C4["eval jury ≤3 lanes, ≤180s, ≤8K chars"]:::win
+    C5["maxIterations + API key caps on autoresearch"]:::win
+  end
+  classDef win fill:#0a1510,stroke:#39ff14,color:#39ff14
+  classDef lose fill:#1f0a12,stroke:#ff2a6d,color:#ff2a6d
+</div>
+
+<div class="card">
+<b>Sequencing rationale:</b> deterministic UI first (P1) because it's the lowest-risk, highest-visibility win and 80% built. Tool wrappers/perf (P2) next because they're self-contained and benchmarkable. Integrations (P3) carry the most wiring risk, so they come after the rendering foundation is stable. Eval/sandbox (P4) is last because it depends on the integrated tool set being final enough to evaluate, and it's the highest-cost phase.
+</div>
+
+<footer>Source of truth: docs/PLAN.md §7 (roadmap) + §8 (decision log). Dates are illustrative planning anchors, not commitments.</footer>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:"dark",themeVariables:{primaryColor:"#0f0f17",primaryTextColor:"#cfeee6",primaryBorderColor:"#00d4aa",lineColor:"#39ff14"}});</script>
+</body></html>

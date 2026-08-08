@@ -1,7 +1,7 @@
 {
   "name": "acidbath",
   "version": "0.1.0",
-  "description": "UI enhancements for Pi coding-agent: semantic working orb, tool lifecycle motion, and context gauge.",
+  "description": "UI enhancements for Pi coding-agent: acidbath header, semantic working orb, tool lifecycle motion, and optional context pyramid.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -19,6 +19,9 @@
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --no-warnings scripts/test-context-pyramid.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-labels.mjs && node --experimental-strip-types --no-warnings scripts/test-token-context.mjs"
   },
   "pi": {
     "extensions": [

@@ -116,13 +116,73 @@ export function buildGaugeLine(opts: GaugeOptions): GaugeLine {
 }
 
 export function visibleWidth(text: string): number {
-	const stripped = stripAnsi(text);
-	return Array.from(stripped).length;
+	let width = 0;
+	for (const token of tokenizeAnsi(text)) {
+		if (token.startsWith("\x1b")) continue;
+		for (const character of Array.from(token)) width += characterWidth(character);
+	}
+	return width;
 }
 
 export function stripAnsi(text: string): string {
 	// eslint-disable-next-line no-control-regex
 	return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+}
+
+/**
+ * Truncate a possibly styled terminal string by visible cells. ANSI escape
+ * sequences are copied as whole tokens and never count toward the budget.
+ */
+export function truncateToWidth(text: string, maxWidth: number, ellipsis = "…"): string {
+	const limit = Math.max(0, Math.trunc(maxWidth));
+	if (limit === 0) return "";
+	if (visibleWidth(text) <= limit) return text;
+	const suffixWidth = Math.min(visibleWidth(ellipsis), limit);
+	const contentLimit = Math.max(0, limit - suffixWidth);
+	let output = "";
+	let used = 0;
+	let hasAnsi = false;
+	for (const token of tokenizeAnsi(text)) {
+		if (token.startsWith("\x1b")) {
+			hasAnsi = true;
+			output += token;
+			continue;
+		}
+		for (const character of Array.from(token)) {
+			const characterWidthValue = characterWidth(character);
+			if (used + characterWidthValue > contentLimit) {
+				const result = `${output}${ellipsis}`;
+				return hasAnsi ? `${result}\x1b[0m` : result;
+			}
+			output += character;
+			used += characterWidthValue;
+		}
+	}
+	const result = `${output}${ellipsis}`;
+	return hasAnsi ? `${result}\x1b[0m` : result;
+}
+
+function tokenizeAnsi(text: string): string[] {
+	// eslint-disable-next-line no-control-regex
+	return text.split(/(\x1b\[[0-9;?]*[ -/]*[@-~])/g).filter(Boolean);
+}
+
+function characterWidth(character: string): number {
+	const codePoint = character.codePointAt(0) ?? 0;
+	// Combining marks and variation selectors occupy no terminal cell.
+	if (codePoint === 0 || (codePoint >= 0x300 && codePoint <= 0x36f) || (codePoint >= 0xfe00 && codePoint <= 0xfe0f)) return 0;
+	// A compact wcwidth approximation for CJK/full-width and emoji glyphs.
+	if (
+		(codePoint >= 0x1100 && codePoint <= 0x115f) ||
+		(codePoint >= 0x2329 && codePoint <= 0x232a) ||
+		(codePoint >= 0x2e80 && codePoint <= 0xa4cf) ||
+		(codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+		(codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+		(codePoint >= 0xfe10 && codePoint <= 0xfe6f) ||
+		(codePoint >= 0xff00 && codePoint <= 0xff60) ||
+		(codePoint >= 0x1f300 && codePoint <= 0x1faff)
+	) return 2;
+	return 1;
 }
 
 export function findEditorBottomBorderIndex(lines: string[], width: number): number {

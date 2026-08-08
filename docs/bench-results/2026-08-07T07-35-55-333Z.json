@@ -1,0 +1,390 @@
+{
+  "node": "v24.17.0",
+  "platform": "darwin-arm64",
+  "utc": "2026-08-07T07:35:55.134Z",
+  "reducedMotion": false,
+  "b1_labelSynthesis": {
+    "count": 100000,
+    "min": 0,
+    "max": 0.1700000000000017,
+    "mean": 0.000034427369999993826,
+    "median": 0.00004100000001017179,
+    "p95": 0.00008300000000360797,
+    "p99": 0.00012499999999704414
+  },
+  "b1_indicatorFor": {
+    "count": 100000,
+    "min": 0,
+    "max": 0.13966700000000287,
+    "mean": 0.000122992559999998,
+    "median": 0.00008300000000360797,
+    "p95": 0.00020899999999812735,
+    "p99": 0.0003750000000053433
+  },
+  "b1_gaugeBuild80": {
+    "count": 100000,
+    "min": 0.00012499999999704414,
+    "max": 0.8092499999999916,
+    "mean": 0.0002870413199999757,
+    "median": 0.0002499999999940883,
+    "p95": 0.0002920000000017353,
+    "p99": 0.001167000000009466
+  },
+  "b1_gaugeBuild120": {
+    "count": 100000,
+    "min": 0.00016599999997879422,
+    "max": 0.17820800000001213,
+    "mean": 0.0002776736099999988,
+    "median": 0.0002499999999940883,
+    "p95": 0.0002920000000017353,
+    "p99": 0.00041699999999877946
+  },
+  "b1_gaugeFillPlan80": {
+    "count": 100000,
+    "min": 0,
+    "max": 0.21566699999999628,
+    "mean": 0.00007841937000002389,
+    "median": 0.00008299999998939711,
+    "p95": 0.00012499999999704414,
+    "p99": 0.00012500000002546585
+  },
+  "b2_motionClock": {
+    "count": 1000,
+    "min": 0.000582999999949152,
+    "max": 0.09304199999996854,
+    "mean": 0.0015805530000000659,
+    "median": 0.0011669999999526226,
+    "p95": 0.002166999999985819,
+    "p99": 0.011459000000002106
+  },
+  "b2_motionClockTimersAtIdle": 0,
+  "b2_motionClockSubscribersAtIdle": 0,
+  "b3_lifecycleRender": {
+    "count": 1000,
+    "min": 0.0002499999999940883,
+    "max": 0.06870799999995825,
+    "mean": 0.0005208379999991734,
+    "median": 0.0003749999999627107,
+    "p95": 0.0004999999999881766,
+    "p99": 0.0024579999999900792
+  },
+  "b3_lifecycleTimersAtIdle": 0,
+  "b4_churn": {
+    "totalMessages": 20,
+    "uniqueMessages": 6,
+    "guardedSetCount": 20,
+    "redundant": 0,
+    "guardedCalls": [
+      {
+        "index": 0,
+        "label": "Solving…"
+      },
+      {
+        "index": 1,
+        "label": "Listening…"
+      },
+      {
+        "index": 2,
+        "label": "Solving…"
+      },
+      {
+        "index": 3,
+        "label": "Composing…"
+      },
+      {
+        "index": 4,
+        "label": "Searching…"
+      },
+      {
+        "index": 5,
+        "label": "Solving…"
+      },
+      {
+        "index": 6,
+        "label": ""
+      },
+      {
+        "index": 7,
+        "label": "Solving…"
+      },
+      {
+        "index": 8,
+        "label": "Shaping…"
+      },
+      {
+        "index": 9,
+        "label": "Solving…"
+      },
+      {
+        "index": 10,
+        "label": "Composing…"
+      },
+      {
+        "index": 11,
+        "label": "Listening…"
+      },
+      {
+        "index": 12,
+        "label": "Solving…"
+      },
+      {
+        "index": 13,
+        "label": "Composing…"
+      },
+      {
+        "index": 14,
+        "label": "Searching…"
+      },
+      {
+        "index": 15,
+        "label": "Solving…"
+      },
+      {
+        "index": 16,
+        "label": "Composing…"
+      },
+      {
+        "index": 17,
+        "label": "Shaping…"
+      },
+      {
+        "index": 18,
+        "label": "Solving…"
+      },
+      {
+        "index": 19,
+        "label": ""
+      }
+    ],
+    "timeline": [
+      {
+        "index": 0,
+        "event": "agent_start",
+        "ms": 0,
+        "label": "Solving…",
+        "redundant": false
+      },
+      {
+        "index": 1,
+        "event": "before_provider_request",
+        "ms": 50,
+        "label": "Listening…",
+        "redundant": false
+      },
+      {
+        "index": 2,
+        "event": "after_provider_response",
+        "ms": 100,
+        "label": "Solving…",
+        "redundant": false
+      },
+      {
+        "index": 3,
+        "event": "message_update",
+        "ms": 150,
+        "label": "Composing…",
+        "redundant": false
+      },
+      {
+        "index": 4,
+        "event": "tool_call",
+        "tool": "read",
+        "ms": 200,
+        "label": "Searching…",
+        "redundant": false
+      },
+      {
+        "index": 5,
+        "event": "tool_result",
+        "ms": 250,
+        "label": "Solving…",
+        "redundant": false
+      },
+      {
+        "index": 6,
+        "event": "tool_call",
+        "tool": "bash",
+        "ms": 300,
+        "label": "",
+        "redundant": false
+      },
+      {
+        "index": 7,
+        "event": "tool_result",
+        "ms": 350,
+        "label": "Solving…",
+        "redundant": false
+      },
+      {
+        "index": 8,
+        "event": "tool_call",
+        "tool": "edit",
+        "ms": 400,
+        "label": "Shaping…",
+        "redundant": false
+      },
+      {
+        "index": 9,
+        "event": "tool_result",
+        "ms": 450,
+        "label": "Solving…",
+        "redundant": false
+      },
+      {
+        "index": 10,
+        "event": "message_update",
+        "ms": 500,
+        "label": "Composing…",
+        "redundant": false
+      },
+      {
+        "index": 11,
+        "event": "before_provider_request",
+        "ms": 550,
+        "label": "Listening…",
+        "redundant": false
+      },
+      {
+        "index": 12,
+        "event": "after_provider_response",
+        "ms": 600,
+        "label": "Solving…",
+        "redundant": false
+      },
+      {
+        "index": 13,
+        "event": "message_update",
+        "ms": 650,
+        "label": "Composing…",
+        "redundant": false
+      },
+      {
+        "index": 14,
+        "event": "tool_call",
+        "tool": "grep",
+        "ms": 700,
+        "label": "Searching…",
+        "redundant": false
+      },
+      {
+        "index": 15,
+        "event": "tool_result",
+        "ms": 750,
+        "label": "Solving…",
+        "redundant": false
+      },
+      {
+        "index": 16,
+        "event": "message_update",
+        "ms": 800,
+        "label": "Composing…",
+        "redundant": false
+      },
+      {
+        "index": 17,
+        "event": "tool_call",
+        "tool": "write",
+        "ms": 850,
+        "label": "Shaping…",
+        "redundant": false
+      },
+      {
+        "index": 18,
+        "event": "tool_result",
+        "ms": 900,
+        "label": "Solving…",
+        "redundant": false
+      },
+      {
+        "index": 19,
+        "event": "agent_end",
+        "ms": 950,
+        "label": "",
+        "redundant": false
+      }
+    ]
+  },
+  "b5_gaugeTick": {
+    "totalAdvanceMs": 0.018416000000001986,
+    "finalReached": true,
+    "rendered": 0.85
+  },
+  "checks": [
+    {
+      "name": "MotionClock clears timer at idle (no subscribers)",
+      "ok": true,
+      "detail": "timerAtIdle=0"
+    },
+    {
+      "name": "ToolLifecycle render path leaves no leaked subscribers",
+      "ok": true,
+      "detail": "timerAtIdle=0"
+    },
+    {
+      "name": "isOrbState('working') true",
+      "ok": true,
+      "detail": "self-test"
+    },
+    {
+      "name": "parseMotionPhase('2') === 2",
+      "ok": true,
+      "detail": "self-test"
+    },
+    {
+      "name": "parseMotionPhase('99') === undefined",
+      "ok": true,
+      "detail": "self-test"
+    },
+    {
+      "name": "normalizeMotionPhase(-1, 4) === 3",
+      "ok": true,
+      "detail": "self-test"
+    },
+    {
+      "name": "clamp01(1.5) === 1",
+      "ok": true,
+      "detail": "self-test"
+    },
+    {
+      "name": "truncateLabel('Hello', 3) starts with 'He'",
+      "ok": true,
+      "detail": "self-test"
+    },
+    {
+      "name": "formatPercent(0.5) === '50%'",
+      "ok": true,
+      "detail": "self-test"
+    },
+    {
+      "name": "stripAnsi removes ANSI escapes",
+      "ok": true,
+      "detail": "self-test"
+    },
+    {
+      "name": "visibleWidth('\\x1b[31mhi\\x1b[0m') === 2",
+      "ok": true,
+      "detail": "self-test"
+    },
+    {
+      "name": "Churn guard prevents redundant setWorkingMessage",
+      "ok": true,
+      "detail": "redundant=0/20 events"
+    },
+    {
+      "name": "Auto-mode churn guard on 20-event burst: at most 8 unique messages",
+      "ok": true,
+      "detail": "unique=6"
+    },
+    {
+      "name": "Indicator for 'listening' produces ≥4 frames",
+      "ok": true,
+      "detail": "frames=6"
+    },
+    {
+      "name": "Reduced motion indicator produces exactly 1 frame",
+      "ok": true,
+      "detail": "frames=1"
+    }
+  ],
+  "checkFailures": 0
+}

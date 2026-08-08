@@ -1,6 +1,4 @@
-/**
- * Wrappers for Pi's built-in tools that add compact lifecycle glyphs.
- */
+/** Built-in tool wrappers with a keyed, status-first presentation layer. */
 
 import {
 	createBashToolDefinition,
@@ -15,6 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Component, Theme } from "@earendil-works/pi-tui";
 import {
+	MotionClock,
 	nextMotionPhase,
 	parseMotionPhase,
 	TOOL_MOTION_INTERVAL_MS,
@@ -22,117 +21,79 @@ import {
 	toolMotionGlyph,
 	type ToolMotionState,
 } from "./ui-motion.js";
+import { truncateToWidth, visibleWidth } from "./ui-gauge.js";
+import { formatToolRow } from "./ui-tool-rows.js";
+import type { LabelInput } from "./ui-labels.js";
 
-type Invalidate = () => void;
-
-interface RendererSlots {
-	call?: Component;
-	result?: Component;
+interface ToolRowState {
+	toolCallId: string;
+	toolName: string;
+	args: Record<string, unknown>;
+	status: ToolMotionState;
+	target: string;
+	metadata: string[];
+	startedAt: number;
+	durationMs?: number;
+	truncated: boolean;
+	callInvalidate?: () => void;
 }
 
-class MotionClock {
-	private readonly subscribers = new Map<string, Invalidate>();
-	private readonly reducedMotion: boolean;
-	private timer: ReturnType<typeof setInterval> | undefined;
-	private phase = 0;
-	private frozenPhase: number | undefined;
-
-	constructor(reducedMotion: boolean, initialFrozenPhase: number | undefined) {
-		this.reducedMotion = reducedMotion;
-		this.frozenPhase = initialFrozenPhase;
-		if (initialFrozenPhase !== undefined) this.phase = initialFrozenPhase;
-	}
-
-	public currentPhase(): number {
-		return this.frozenPhase ?? this.phase;
-	}
-
-	public subscribe(id: string, invalidate: Invalidate): void {
-		this.subscribers.set(id, invalidate);
-		this.syncTimer();
-	}
-
-	public unsubscribe(id: string): void {
-		this.subscribers.delete(id);
-		this.syncTimer();
-	}
-
-	public setFrozenPhase(phase: number | undefined): void {
-		this.frozenPhase = phase;
-		if (phase !== undefined) this.phase = phase;
-		this.syncTimer();
-		this.invalidateAll();
-	}
-
-	public modeLabel(): string {
-		if (this.reducedMotion) return "reduced";
-		return this.frozenPhase === undefined ? "live" : `frame ${this.frozenPhase}`;
-	}
-
-	public dispose(): void {
-		if (this.timer !== undefined) clearInterval(this.timer);
-		this.timer = undefined;
-		this.subscribers.clear();
-	}
-
-	private syncTimer(): void {
-		const shouldRun = !this.reducedMotion && this.frozenPhase === undefined && this.subscribers.size > 0;
-		if (shouldRun && this.timer === undefined) {
-			this.timer = setInterval(() => {
-				this.phase = nextMotionPhase(this.phase, TOOL_PENDING_FRAMES.length);
-				this.invalidateAll();
-			}, TOOL_MOTION_INTERVAL_MS);
-		} else if (!shouldRun && this.timer !== undefined) {
-			clearInterval(this.timer);
-			this.timer = undefined;
-		}
-	}
-
-	private invalidateAll(): void {
-		for (const invalidate of this.subscribers.values()) invalidate();
-	}
-}
-
-class ToolLifecycleComponent implements Component {
-	private readonly child: Component;
-	private readonly state: ToolMotionState;
+class ToolRowComponent implements Component {
+	private readonly row: ToolRowState;
 	private readonly theme: Theme;
 	private readonly clock: MotionClock;
 	private readonly reducedMotion: boolean;
 	private readonly noColor: boolean;
+	private readonly details: Component | undefined;
+	private readonly expanded: boolean;
+	private readonly hideWhenSettled: boolean;
 
 	constructor(
-		child: Component,
-		state: ToolMotionState,
+		row: ToolRowState,
 		theme: Theme,
 		clock: MotionClock,
 		reducedMotion: boolean,
 		noColor: boolean,
+		details: Component | undefined,
+		expanded: boolean,
+		hideWhenSettled = false,
 	) {
-		this.child = child;
-		this.state = state;
+		this.row = row;
 		this.theme = theme;
 		this.clock = clock;
 		this.reducedMotion = reducedMotion;
 		this.noColor = noColor;
+		this.details = details;
+		this.expanded = expanded;
+		this.hideWhenSettled = hideWhenSettled;
 	}
 
 	public render(width: number): string[] {
-		const glyph = toolMotionGlyph(this.state, this.clock.currentPhase(), this.reducedMotion);
-		const status = this.noColor
-			? glyph
-			: this.state === "success"
-				? this.theme.fg("success", glyph)
-				: this.state === "error"
-					? this.theme.fg("error", glyph)
-					: this.theme.fg("dim", glyph);
-		const childLines = this.child.render(Math.max(1, width - 2));
-		if (childLines.length === 0) return [status];
-		return [`${status} ${childLines[0]}`, ...childLines.slice(1).map((line) => `  ${line}`)];
+		if (this.hideWhenSettled && this.row.status !== "pending") return [];
+		const plain = formatToolRow({
+			width,
+			toolName: this.row.toolName,
+			target: this.row.target,
+			status: this.row.status,
+			phase: this.clock.currentPhase(),
+			reducedMotion: this.reducedMotion,
+			metadata: this.row.metadata,
+			expandable: this.row.status !== "pending" || Boolean(this.details) || this.row.truncated,
+			expanded: this.expanded,
+		});
+		const statusWidth = visibleWidth(plain.split(" ", 1)[0] ?? "");
+		const styled = this.noColor
+			? plain
+			: `${this.theme.fg(this.row.status === "error" ? "error" : this.row.status === "success" ? "success" : "dim", plain.slice(0, statusWidth))}${plain.slice(statusWidth)}`;
+		const lines = [truncateToWidth(styled, width)];
+		if (this.expanded && this.details) {
+			for (const line of this.details.render(Math.max(1, width))) lines.push(truncateToWidth(line, width));
+		}
+		return lines;
 	}
 
 	public invalidate(): void {
-		this.child.invalidate();
+		this.details?.invalidate();
 	}
 }
 
@@ -142,47 +103,136 @@ function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDeta
 	clock: MotionClock,
 	reducedMotion: boolean,
 	noColor: boolean,
-	slots: Map<string, RendererSlots>,
+	rows: Map<string, ToolRowState>,
+	onLabel: ((input: LabelInput) => void) | undefined,
 ): void {
 	const definition = factory(process.cwd());
 	pi.registerTool({
 		...definition,
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			// Presentation state never changes the model-visible result.
 			return factory(ctx.cwd).execute(toolCallId, params, signal, onUpdate, ctx);
 		},
 		renderCall(args, theme, context) {
-			const rowSlots = slots.get(context.toolCallId) ?? {};
-			const runtimeDefinition = factory(context.cwd);
-			const base = runtimeDefinition.renderCall?.(args, theme, {
-				...context,
-				lastComponent: rowSlots.call,
+			onLabel?.({
+				event: "tool_call",
+				toolName: definition.name,
+				toolArgs: args as Record<string, unknown>,
+				isPartial: context.isPartial,
+				isError: context.isError,
 			});
-			if (!base) throw new Error(`Missing built-in call renderer for ${definition.name}`);
-			rowSlots.call = base;
-			slots.set(context.toolCallId, rowSlots);
-
-			const state: ToolMotionState = context.isError ? "error" : context.isPartial ? "pending" : "success";
-			if (state === "pending") clock.subscribe(context.toolCallId, context.invalidate);
+			const row = getOrCreateRow(rows, context.toolCallId, definition.name, args as Record<string, unknown>);
+			// A call slot is always pending until its result slot settles; Pi may
+			// invoke renderCall with isPartial=false before execution completes.
+			row.status = context.isError ? "error" : "pending";
+			row.target = targetForTool(definition.name, row.args);
+			row.callInvalidate = context.invalidate;
+			if (row.status === "pending") clock.subscribe(context.toolCallId, context.invalidate);
 			else clock.unsubscribe(context.toolCallId);
-			return new ToolLifecycleComponent(base, state, theme, clock, reducedMotion, noColor);
+			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, undefined, false, true);
 		},
 		renderResult(result, options, theme, context) {
-			const rowSlots = slots.get(context.toolCallId) ?? {};
-			const runtimeDefinition = factory(context.cwd);
-			const base = runtimeDefinition.renderResult?.(result, options, theme, {
-				...context,
-				lastComponent: rowSlots.result,
+			onLabel?.({
+				event: "tool_result",
+				toolName: definition.name,
+				isPartial: options.isPartial,
+				isError: context.isError,
 			});
-			if (!base) throw new Error(`Missing built-in result renderer for ${definition.name}`);
-			rowSlots.result = base;
-			slots.set(context.toolCallId, rowSlots);
-			if (!options.isPartial) {
+			const row = getOrCreateRow(rows, context.toolCallId, definition.name, context.args as Record<string, unknown>);
+			row.status = context.isError ? "error" : options.isPartial ? "pending" : "success";
+			row.target = targetForTool(definition.name, row.args);
+			if (!options.isPartial && row.durationMs === undefined) row.durationMs = Math.max(0, Date.now() - row.startedAt);
+			row.metadata = options.isPartial
+				? ["running"]
+				: metadataForTool(definition.name, row.args, result as unknown as Record<string, unknown>, row.durationMs);
+			row.truncated = hasTruncation(result as unknown as Record<string, unknown>);
+			if (row.status === "pending") clock.subscribe(context.toolCallId, context.invalidate);
+			else {
 				clock.unsubscribe(context.toolCallId);
-				slots.delete(context.toolCallId);
+				// The call slot owns the pending row. Invalidate it immediately so
+				// the settled result slot is the only compact row on screen.
+				row.callInvalidate?.();
 			}
-			return base;
+
+			// The stock renderer is retained only as an explicitly expanded detail
+			// body. Its content is never altered or fed back to the model.
+			const runtimeDefinition = factory(context.cwd);
+			const details = options.expanded
+				? runtimeDefinition.renderResult?.(result, options, theme, { ...context, lastComponent: context.lastComponent })
+				: undefined;
+			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, details, options.expanded);
 		},
 	});
+}
+
+function getOrCreateRow(
+	rows: Map<string, ToolRowState>,
+	toolCallId: string,
+	toolName: string,
+	args: Record<string, unknown>,
+): ToolRowState {
+	const existing = rows.get(toolCallId);
+	if (existing) {
+		existing.args = args;
+		return existing;
+	}
+	const row: ToolRowState = {
+		toolCallId,
+		toolName,
+		args,
+		status: "pending",
+		target: targetForTool(toolName, args),
+		metadata: ["pending"],
+		startedAt: Date.now(),
+		truncated: false,
+	};
+	rows.set(toolCallId, row);
+	return row;
+}
+
+function targetForTool(toolName: string, args: Record<string, unknown>): string {
+	const value = toolName === "bash"
+		? args.command
+		: args.path ?? args.file_path ?? args.pattern ?? args.directory ?? args.query;
+	return cleanInline(typeof value === "string" ? value : "");
+}
+
+function metadataForTool(toolName: string, args: Record<string, unknown>, result: Record<string, unknown>, durationMs: number | undefined): string[] {
+	const details = isRecord(result.details) ? result.details : {};
+	const metadata: string[] = [];
+	const exitCode = numberValue(details.exitCode ?? result.exitCode);
+	if (toolName === "bash" && exitCode !== undefined) metadata.push(`exit ${exitCode}`);
+	const lines = numberValue(details.lines ?? details.lineCount ?? details.matchCount ?? details.entryCount);
+	if (lines !== undefined) metadata.push(`${Math.round(lines)} ${toolName === "grep" ? "matches" : "lines"}`);
+	const added = numberValue(details.added ?? details.addedLines);
+	const removed = numberValue(details.removed ?? details.removedLines);
+	if (added !== undefined || removed !== undefined) metadata.push(`+${Math.round(added ?? 0)} -${Math.round(removed ?? 0)}`);
+	if (durationMs !== undefined && durationMs > 0) metadata.push(formatDuration(durationMs));
+	if (hasTruncation(result)) metadata.push("truncated");
+	if (metadata.length === 0 && toolName === "bash" && typeof args.command === "string") metadata.push("completed");
+	return metadata;
+}
+
+function hasTruncation(result: Record<string, unknown>): boolean {
+	const details = isRecord(result.details) ? result.details : result;
+	const truncation = isRecord(details.truncation) ? details.truncation : undefined;
+	return details.truncated === true || truncation?.truncated === true || truncation?.truncatedByBytes === true || truncation?.truncatedByLines === true;
+}
+
+function formatDuration(durationMs: number): string {
+	return durationMs < 1000 ? `${Math.round(durationMs)}ms` : `${(durationMs / 1000).toFixed(1).replace(/\.0$/, "")}s`;
+}
+
+function numberValue(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+	return typeof value === "object" && value !== null;
+}
+
+function cleanInline(value: string): string {
+	return value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 export interface ToolMotionControls {
@@ -193,25 +243,34 @@ export interface ToolMotionControls {
 
 export function registerToolMotionRenderers(
 	pi: ExtensionAPI,
-	options: { reducedMotion: boolean; noColor: boolean; initialPhase?: string },
+	options: {
+		reducedMotion: boolean;
+		noColor: boolean;
+		initialPhase?: string;
+		clock?: MotionClock;
+		onLabel?: (input: LabelInput) => void;
+	},
 ): ToolMotionControls {
-	const clock = new MotionClock(options.reducedMotion, parseMotionPhase(options.initialPhase));
-	const slots = new Map<string, RendererSlots>();
+	const clock = options.clock ?? new MotionClock(options.reducedMotion, parseMotionPhase(options.initialPhase));
+	const ownsClock = options.clock === undefined;
+	const rows = new Map<string, ToolRowState>();
 
-	registerWrappedTool(pi, createReadToolDefinition, clock, options.reducedMotion, options.noColor, slots);
-	registerWrappedTool(pi, createBashToolDefinition, clock, options.reducedMotion, options.noColor, slots);
-	registerWrappedTool(pi, createEditToolDefinition, clock, options.reducedMotion, options.noColor, slots);
-	registerWrappedTool(pi, createWriteToolDefinition, clock, options.reducedMotion, options.noColor, slots);
-	registerWrappedTool(pi, createGrepToolDefinition, clock, options.reducedMotion, options.noColor, slots);
-	registerWrappedTool(pi, createFindToolDefinition, clock, options.reducedMotion, options.noColor, slots);
-	registerWrappedTool(pi, createLsToolDefinition, clock, options.reducedMotion, options.noColor, slots);
+	registerWrappedTool(pi, createReadToolDefinition, clock, options.reducedMotion, options.noColor, rows, options.onLabel);
+	registerWrappedTool(pi, createBashToolDefinition, clock, options.reducedMotion, options.noColor, rows, options.onLabel);
+	registerWrappedTool(pi, createEditToolDefinition, clock, options.reducedMotion, options.noColor, rows, options.onLabel);
+	registerWrappedTool(pi, createWriteToolDefinition, clock, options.reducedMotion, options.noColor, rows, options.onLabel);
+	registerWrappedTool(pi, createGrepToolDefinition, clock, options.reducedMotion, options.noColor, rows, options.onLabel);
+	registerWrappedTool(pi, createFindToolDefinition, clock, options.reducedMotion, options.noColor, rows, options.onLabel);
+	registerWrappedTool(pi, createLsToolDefinition, clock, options.reducedMotion, options.noColor, rows, options.onLabel);
 
 	return {
 		dispose: () => {
-			clock.dispose();
-			slots.clear();
+			rows.clear();
+			if (ownsClock) clock.dispose();
 		},
 		setFrozenPhase: (phase) => clock.setFrozenPhase(phase),
 		modeLabel: () => clock.modeLabel(),
 	};
 }
+
+export { MotionClock, nextMotionPhase, TOOL_MOTION_INTERVAL_MS, TOOL_PENDING_FRAMES };
