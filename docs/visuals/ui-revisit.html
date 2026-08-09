@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Acidbath UI Plan Revisit</title>
+<style>
+:root{--bg:#090b10;--panel:#10151c;--panel2:#0c1117;--line:#24313b;--text:#d8e3e8;--muted:#84949d;--teal:#00d4aa;--blue:#78aad8;--green:#39d98a;--red:#ff637d;--amber:#ffbd58;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.wrap{max-width:1120px;margin:auto;padding:32px 20px 72px}h1{color:var(--teal);font-size:28px;margin:0}h2{font-size:19px;color:var(--amber);border-bottom:1px solid var(--line);padding-bottom:8px;margin:38px 0 14px}.sub{color:var(--muted);margin-top:4px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}.card h3{margin:0 0 5px;color:var(--teal)}.card p{color:var(--muted);margin:5px 0 14px}.recommended{border-color:var(--teal);box-shadow:0 0 0 1px #00d4aa33}.terminal{background:#05070a;border:1px solid #27343d;border-radius:9px;padding:14px;font:13px/1.65 var(--mono);overflow:auto}.term-head{color:var(--muted);border-bottom:1px solid #1c252d;padding-bottom:8px;margin-bottom:10px}.orb{color:var(--teal);font-weight:bold}.label{color:#d9e6e9}.dim{color:#788992}.ok{color:var(--green)}.err{color:var(--red)}.warn{color:var(--amber)}.gauge{color:var(--blue)}.rail{display:flex;gap:10px;align-items:center;border-top:1px solid #1c252d;margin-top:10px;padding-top:8px;white-space:nowrap}.bar{color:var(--blue);letter-spacing:-1px}.matrix{width:100%;border-collapse:collapse;font-size:13px}.matrix th,.matrix td{border:1px solid var(--line);padding:9px;text-align:left;vertical-align:top}.matrix th{color:var(--teal);background:var(--panel2)}.note{color:var(--muted);font-size:13px}.pill{display:inline-block;padding:2px 8px;border-radius:12px;background:#17252a;color:var(--teal);font-size:12px;margin:2px}.wide{margin-top:14px}@media(max-width:780px){.grid{grid-template-columns:1fr}.wrap{padding:22px 14px}}
+</style>
+</head>
+<body><main class="wrap">
+<h1>Acidbath UI Plan Revisit</h1>
+<p class="sub">Compact UI alternatives for orb, tool lifecycle, optional context placement, and the acidbath header. The context prototype is now available as an optional production widget; the animation remains research-only.</p>
+
+<h2>Shared information model</h2>
+<div class="terminal">
+  <div class="term-head">agent turn · current status</div>
+  <div><span class="orb">⡀⢀⠀</span> <span class="label">Waiting for provider response…</span></div>
+  <div><span class="ok">✓</span> read <span class="dim">src/extensions/acidbath/index.ts</span></div>
+  <div><span class="orb">●</span> <span class="label">Running command: npm test</span></div>
+  <div><span class="err">×</span> bash <span class="dim">command failed</span></div>
+  <div class="rail"><span class="gauge">└ 42% █████████████████──────────────┘</span><span class="dim">context</span></div>
+</div>
+<p class="note">Orb communicates agent phase. Tool glyph communicates lifecycle. Gauge communicates context pressure. They should not all repeat the same message.</p>
+
+<h2>Custom welcome prototype</h2>
+<div class="terminal"><div class="term-head">dismisses on first user turn · read-only checks</div><span class="orb">██████╗ ██╗██╗  ██╗</span><br><span class="orb">██╔══██╗██║╚██╗██╔╝</span> <span class="dim">PIx</span><br><span class="orb">██████╔╝██║ ╚███╔╝</span> <span class="dim">◈ copilot-gpt-5.3-codex</span><br><span class="orb">██╔═══╝ ██║ ██╔██╗</span> <span class="dim">⌂ ~/dev/acidbath</span><br><span class="orb">██║     ██║██╔╝ ██╗</span> <span class="ok">✓ ready</span><br><span class="orb">╚═╝     ╚═╝╚═╝  ╚═╝</span><br><br><span class="ok">✓</span> tools  configured   <span class="ok">✓</span> skills  configured   <span class="ok">✓</span> ast-grep  0.45.0</div>
+<p class="note">Unlike pix-welcome, the acidbath version should not modify .gitignore or inspect secret/auth contents.</p>
+
+<h2>Context pyramid prototype</h2>
+<div class="grid">
+  <section class="card"><h3>42% · healthy headroom</h3><div class="terminal"><span class="dim">    ·</span><br><span class="dim">  · · ·</span><br><span class="orb">● ● · · ·</span> <span class="gauge">42%</span></div></section>
+  <section class="card"><h3>86% · high pressure</h3><div class="terminal"><span class="warn">    ●</span><br><span class="warn">  ● ● ●</span><br><span class="warn">● ● ● ● ·</span> <span class="warn">86%</span></div></section>
+  <section class="card"><h3>98% · critical</h3><div class="terminal"><span class="err">    ●</span><br><span class="err">  ● ● ●</span><br><span class="err">● ● ● ● ●</span> <span class="err">98%</span></div></section>
+</div>
+<p class="note">The pyramid is intentionally small. This prototype compares the above-editor widget placement against the border-preserving fallback before production wiring. Orb shape communicates fill, percentage remains text-accessible, and progressive color can show pressure.</p>
+<div class="grid wide"><section class="card"><h3>Placement A · above editor</h3><div class="terminal"><span class="dim">    ·</span><br><span class="dim">  · · ·</span><br><span class="orb">● ● · · ·</span> <span class="gauge">42%</span><br><span class="dim">editor starts below the three-row widget</span></div></section><section class="card"><h3>Placement B · border fallback</h3><div class="terminal"><span class="label">└ 42% ●●···································· ┘</span><br><span class="dim">editor border remains unchanged</span></div></section></div>
+
+<h2>Alternatives</h2>
+<div class="grid">
+  <section class="card recommended"><h3>A · Compact semantic <span class="pill">recommended baseline</span></h3><p>Current arrangement, refined for vocabulary, spacing, contrast, and no-color readability.</p><div class="terminal"><span class="orb">⡀⢀⠀</span> <span class="label">Waiting for provider response…</span><br><span class="ok">✓</span> edit <span class="dim">ui-orb.ts</span><div class="rail"><span class="gauge">└ 42% █████████───────────────┘</span></div></div></section>
+  <section class="card"><h3>B · Compact segmented rail</h3><p>Subtle separators make phase, detail, and context independently scannable; collapses to A at narrow widths.</p><div class="terminal"><span class="orb">⡀⢀⠀</span> <span class="label">Waiting…</span> <span class="dim">│</span> <span class="dim">provider</span><br><span class="ok">✓</span> <span class="dim">edit</span> <span class="dim">│</span> <span class="dim">ui-orb.ts</span><div class="rail"><span class="gauge">context 42% └█████████───────────────┘</span></div></div></section>
+  <section class="card"><h3>C · Quiet monochrome</h3><p>Neutral by default; color is reserved for errors, pressure thresholds, and active lifecycle state.</p><div class="terminal"><span class="dim">⡀⢀⠀</span> <span class="label">Waiting for provider response…</span><br><span class="dim">✓</span> <span class="dim">edit ui-orb.ts</span><br><span class="err">×</span> <span class="label">bash failed</span><div class="rail"><span class="warn">context 86% └██████████████████─────┘</span></div></div></section>
+</div>
+
+<h2>Review matrix</h2>
+<table class="matrix"><thead><tr><th>Criterion</th><th>A · Compact</th><th>B · Segmented</th><th>C · Quiet</th></tr></thead><tbody>
+<tr><td>One-glance state</td><td>Strong; familiar</td><td>Strong; more structure</td><td>Depends more on text</td></tr>
+<tr><td>Terminal density</td><td>Lowest</td><td>Medium</td><td>Lowest</td></tr>
+<tr><td>No-color clarity</td><td>Good with labels</td><td>Good with separators</td><td>Requires glyph/text discipline</td></tr>
+<tr><td>Context pressure</td><td>Gauge color + percent</td><td>Explicit context segment</td><td>Exceptional threshold accent</td></tr>
+<tr><td>Implementation risk</td><td>Low</td><td>Medium</td><td>Low–medium</td></tr>
+</tbody></table>
+<p class="note wide">The compact semantic direction remains preferred. Context placement is selectable with `/context off|above|below`; the final implementation must pass widths 60/80/120, NO_COLOR, and reduced-motion checks.</p>
+</main></body></html>

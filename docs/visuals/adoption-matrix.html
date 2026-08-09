@@ -1,0 +1,80 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Acidbath — Community Tool Adoption Matrix</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+:root{--void:#0a0a0f;--teal:#00d4aa;--magenta:#ff0080;--acid:#39ff14;--amber:#ffb800;--purple:#bd00ff;--pink:#ff2a6d;--txt:#cfeee6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--void);color:var(--txt);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1200px;margin:0 auto;padding:32px 20px 80px}
+h1{font-size:26px;color:var(--teal);margin:0 0 4px}
+h2{font-size:19px;color:var(--amber);margin:42px 0 10px;border-bottom:1px solid #1a1a2e;padding-bottom:6px}
+.sub{color:#7fa;opacity:.8;margin:0 0 24px}
+.mermaid{background:#0c0c12;border:1px solid #142b26;border-radius:10px;padding:18px;margin:14px 0;overflow-x:auto}
+.card{background:#0f0f17;border:1px solid #142b26;border-radius:10px;padding:14px 18px;margin:14px 0}
+table{width:100%;border-collapse:collapse;font-size:12.5px;margin:12px 0}
+th,td{border:1px solid #142b26;padding:7px 9px;text-align:left;vertical-align:top}
+th{background:#12121c;color:var(--teal);position:sticky;top:0}
+tr:nth-child(even){background:#0c0c12}
+.bar{height:9px;border-radius:3px;background:#1a1a2e;display:inline-block;min-width:60px;vertical-align:middle}
+.bar i{display:block;height:100%;border-radius:3px}
+.dec{font-weight:700}
+.adopt{color:var(--acid)} .defer{color:var(--amber)} .reject{color:var(--pink)} .study{color:var(--purple)}
+footer{color:#567;margin-top:40px;font-size:12px}
+</style></head><body><div class="wrap">
+<h1>Community Tool Adoption Matrix</h1>
+<p class="sub">Read-only inspection only (this session). Scores 1–5 (5 best). Read across each row; sort by decision.</p>
+
+<h2>1. Decision flow</h2>
+<div class="mermaid">
+flowchart TD
+  Q["Candidate repo"] --> L["License + activity check"]
+  L -->|MIT/Apache, active| FIT{"Fits an acidbath lane?"}
+  L -->|non-permissive / abandoned| REJ["REJECT"]:::lose
+  FIT -->|yes, core| COLLISION{"Cmd/tool name\ncollision with acidbath?"}
+  FIT -->|yes, but heavy| STUDY["STUDY — borrow pattern,\ndon't depend"]:::study
+  FIT -->|no| DEFER["DEFER"]:::defer
+  COLLISION -->|no| ADOPT["ADOPT — add to packages\nor vendor"]:::win
+  COLLISION -->|yes| RENAME["ADOPT w/ namespace\nor rename"]:::win
+  classDef win fill:#0a1510,stroke:#39ff14,color:#39ff14
+  classDef lose fill:#1f0a12,stroke:#ff2a6d,color:#ff2a6d
+  classDef study fill:#160a1f,stroke:#bd00ff,color:#bd00ff
+  classDef defer fill:#1f1a0a,stroke:#ffb800,color:#ffb800
+</div>
+
+<h2>2. Scored matrix</h2>
+<table>
+<tr><th>Repo</th><th>★</th><th>License</th><th>Activity</th><th>Fit</th><th>Maint</th><th>Sec</th><th>Perf</th><th>Op-risk</th><th>Decision</th><th>Phase</th></tr>
+<tr><td><b>visual-explainer</b><br><small>nicobailon</small></td><td>9.4k</td><td>MIT</td><td>2mo</td><td>5</td><td>3</td><td>4</td><td>4</td><td>2</td><td class="dec adopt">ADOPT</td><td>P1</td></tr>
+<tr><td><b>pi-codex-compaction</b><br><small>jvm</small></td><td>14</td><td>MIT</td><td>daily</td><td>4</td><td>4</td><td>4</td><td>5</td><td>2</td><td class="dec adopt">ADOPT</td><td>P2</td></tr>
+<tr><td><b>pi-codex-tools</b><br><small>jvm</small></td><td>14</td><td>Apache-2.0</td><td>daily</td><td>4</td><td>4</td><td>4</td><td>4</td><td>3</td><td class="dec adopt">ADOPT pattern + tool</td><td>P2</td></tr>
+<tr><td><b>pix-bash</b><br><small>xynogen/pix-mono</small></td><td>44</td><td>MIT</td><td>daily</td><td>4</td><td>4</td><td>4</td><td>5</td><td>3</td><td class="dec adopt">ADOPT pattern</td><td>P2</td></tr>
+<tr><td><b>pi-subagents</b><br><small>nicobailon</small></td><td>2.9k</td><td>MIT</td><td>daily</td><td>5</td><td>5</td><td>4</td><td>4</td><td>3</td><td class="dec adopt">ADOPT</td><td>P3</td></tr>
+<tr><td><b>pi-ast-grep</b><br><small>bjoernaagaard</small></td><td>0</td><td>Apache-2.0</td><td>daily</td><td>4</td><td>3</td><td>4</td><td>4</td><td>2</td><td class="dec adopt">ADOPT</td><td>P3</td></tr>
+<tr><td><b>pi-autoresearch</b><br><small>davebcn87</small></td><td>7.5k</td><td>MIT</td><td>monthly</td><td>5</td><td>4</td><td>4</td><td>4</td><td>3</td><td class="dec adopt">ADOPT</td><td>P4</td></tr>
+<tr><td><b>oh-my-pi / metaharness</b><br><small>can1357</small></td><td>22.5k</td><td>MIT</td><td>weekly</td><td>4</td><td>5</td><td>4</td><td>5</td><td>4</td><td class="dec study">STUDY</td><td>P4</td></tr>
+<tr><td><b>pi-lens</b><br><small>apmantza</small></td><td>312</td><td>MIT</td><td>daily</td><td>4</td><td>5</td><td>3</td><td>3</td><td>3</td><td class="dec adopt">ADOPT (debug-scoped)</td><td>P3</td></tr>
+<tr><td><b>agy</b> + <b>research-bridge</b><br><small>(pi-herdr, local)</small></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="dec reject">DROP (→ pi-subagents)</td><td>—</td></tr>
+<tr><td><b>web_search</b> tool</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="dec reject">DROP (orphan)</td><td>—</td></tr>
+<tr><td><b>my-pi-setup</b><br><small>davis7dotsh</small></td><td>950</td><td>—</td><td>weekly</td><td>3</td><td>4</td><td>3</td><td>3</td><td>3</td><td class="dec study">STUDY</td><td>P4</td></tr>
+<tr><td><b>oh-my-pi / coding-agent tools</b></td><td>—</td><td>MIT</td><td>daily</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="dec study">REFERENCE only</td><td>—</td></tr>
+<tr><td><b>pi-herdr-ui.ts</b><br><small>(local)</small></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>5</td><td class="dec reject">REJECT (collision)</td><td>—</td></tr>
+</table>
+
+<h2>3. Recommended adoption order</h2>
+<div class="mermaid">
+flowchart LR
+  A["P1: visual-explainer\n(unblock filtered package)"]:::win --> B["P2: pi-codex-compaction\n+ pi-codex-tools\n+ pix-bash pattern"]
+  B --> C["P3: pi-subagents\n+ pi-ast-grep + pi-lens(debug)\n+ vendor scheduler+cockpit\n+ profiles.json + skill symlinks"]
+  C --> D["P4: pi-autoresearch eval loop\n+ (study) metaharness model\nscored-matrix rubric"]
+  classDef win fill:#0a1510,stroke:#39ff14,color:#39ff14
+</div>
+
+<div class="card">
+<b>Eval rubric (per your direction: read-only checks first, then a rubric).</b> For each adopted tool, score on the same six axes above (compat / maintenance / license / security / perf / operational-risk) AND run an objective <code>measure.sh</code> benchmark with <code>checks.sh</code> backpressure, using pi-autoresearch's MAD confidence scoring. Open question Q4 in PLAN.md asks whether you want the scored-matrix alone for the first pass or matrix + objective benchmark.
+</div>
+
+<footer>Source of truth: docs/PLAN.md §3 (adoption matrix) + §8 (decision log). Stars/license/activity from fetched GitHub pages (2026-08-06).</footer>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:"dark",themeVariables:{primaryColor:"#0f0f17",primaryTextColor:"#cfeee6",primaryBorderColor:"#00d4aa",lineColor:"#39ff14"}});</script>
+</body></html>

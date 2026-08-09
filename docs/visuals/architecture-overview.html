@@ -1,0 +1,135 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Acidbath Umbrella — Architecture & Topology Profiles</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+:root{--void:#0a0a0f;--teal:#00d4aa;--magenta:#ff0080;--acid:#39ff14;--amber:#ffb800;--purple:#bd00ff;--pink:#ff2a6d;--slate:#1a1a2e;--txt:#cfeee6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--void);color:var(--txt);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:32px 20px 80px}
+h1{font-size:26px;color:var(--teal);letter-spacing:.5px;margin:0 0 4px}
+h2{font-size:19px;color:var(--amber);margin:42px 0 10px;border-bottom:1px solid #1a1a2e;padding-bottom:6px}
+.sub{color:#7fa;opacity:.8;margin:0 0 24px}
+.card{background:#0f0f17;border:1px solid #142b26;border-radius:10px;padding:14px 18px;margin:14px 0}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:#9bb}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.mermaid{background:#0c0c12;border:1px solid #142b26;border-radius:10px;padding:18px;margin:14px 0;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0}
+th,td{border:1px solid #142b26;padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#12121c;color:var(--teal)}
+td b{color:var(--amber)}
+.win{color:var(--acid)} .lose{color:var(--pink)}
+footer{color:#567;margin-top:40px;font-size:12px}
+</style></head><body><div class="wrap">
+<h1>Acidbath Umbrella — Architecture &amp; Topology Profiles</h1>
+<p class="sub">Implementation in progress; visual appearance remains human-gated. Open this file in any browser. Diagrams render via Mermaid CDN.</p>
+
+<div class="legend">
+ <span><i style="background:var(--teal)"></i>acidbath-owned</span>
+ <span><i style="background:var(--amber)"></i>vendored from pi-herdr (heritage)</span>
+ <span><i style="background:var(--purple)"></i>community package</span>
+ <span><i style="background:var(--pink)"></i>blocked / do-not-load</span>
+ <span><i style="background:#2a2a3e"></i>Pi runtime (peer dep)</span>
+</div>
+
+<h2>1. Umbrella architecture</h2>
+<div class="mermaid">
+flowchart LR
+  subgraph RT["Pi runtime (peer deps: @earendil-works/pi-*)"]
+    PI[("pi coding-agent\nsession_start / events\nregisterTool / registerCommand")]
+  end
+  subgraph AB["acidbath — the umbrella package"]
+    direction TB
+    UI["index.ts\n/orb /motion /topology\norb state machine"]
+    LABELS["ui-labels.ts (V1 wired)\npure synthesizeLabel() + debounce"]
+    TOOLS["ui-tools.ts\nwrapped read/bash/edit/write/grep/find/ls"]
+    GAUGE["ui-gauge.ts\ncontext gauge"]
+    MOTION["ui-motion.ts\ndeterministic motion clock"]
+    THEME["themes/acidbath-cyberdyne-teal.json"]
+    subgraph HER["extensions/heritage/ (vendored from pi-herdr — render-only)"]
+      SCHED["scheduler.ts\n≤7K-char snapshot injection"]
+      COCK["cockpit.ts\nfleet widget (render-only)"]
+    end
+    SKILLS["lib-managed skills\nPi target pending\n(pi.skills manifest + lib deploy)"]
+    PROFILES["config/profiles.json\ndefault|debug|eval|explore"]
+    LAUNCH["scripts/launcher.sh\n--profile (explicit flags)"]
+  end
+  subgraph EXT["community packages (explicit --extension / packages)"]
+    SUB["pi-subagents\n(delegation surface)"]
+    ASG["pi-ast-grep"]
+    ATR["pi-autoresearch\n(eval loop)"]
+    VEC["visual-explainer"]
+    CMP["pi-codex-compaction"]
+    COD["pi-codex-tools\n(apply_patch: Linux only)"]
+    LENS["pi-lens\n(debug profile only)"]
+  end
+  subgraph BLK["blocked / dropped (kept for safety)"]
+    B1["!extensions/**"]
+    B2["!prompts/**"]
+    B3["!skills/** (allowlist)"]
+    B4["pi-herdr-ui.ts — REJECT\ncollides with /orb /motion"]
+    B5["agy + research-bridge — DROPPED\n(superseded by pi-subagents)"]
+    B6["web_search — DROPPED (orphan)"]
+  end
+
+  PI --> UI
+  UI --> LABELS
+  UI --> TOOLS
+  UI --> GAUGE
+  UI --> MOTION
+  UI --> THEME
+  UI -.-> HER
+  LAUNCH --> PROFILES
+  PROFILES --> UI
+  PROFILES -.-> HER
+  PROFILES -.-> EXT
+  UI --> SKILLS
+  BLK -. "global discovery off" .-> PI
+</div>
+
+<div class="card">
+<b>Key rule:</b> <span class="lose">pi-herdr-ui.ts is never loaded into the same session as acidbath</span> — both register <code>/orb</code>, <code>/motion</code>, and the gauge/indicator hooks. Acidbath already owns those. The pi-herdr companion pane keeps its own session via <code>--no-extensions</code> + explicit <code>--extension</code>.
+</div>
+
+<h2>2. Resource loading model</h2>
+<div class="mermaid">
+flowchart TD
+  START(["pi session start"]) --> BASE["--no-extensions --no-skills --offline\n(baseline: discovery off)"]
+  BASE --> PROFILE{"PI_ACIDBATH_PROFILE?\nelse 'default'"}
+  PROFILE -->|default| D["tools: read,bash,edit,write,grep,find,ls\nthinking: high\next: acidbath + scheduler(if Herdr)"]
+  PROFILE -->|debug| DBG["tools: read,grep,find,ls,bash(RO)\nthinking: medium\next: +pi-lens (LSP, gated)"]
+  PROFILE -->|eval| EV["tools: read,grep,find,ls\nfrozen motion\next: +pi-subagents (read-only jury)"]
+  PROFILE -->|explore| EX["tools: read,grep,find,ls\next: +scheduler+cockpit+pi-subagents\nskill: +agent-browser"]
+  D & DBG & EV & EX --> EXPLICIT["explicit --extension / --skill / --tools flags"]
+  EXPLICIT --> LOAD["acidbath surfaces load (no global discovery)"]
+  LOAD --> CHECK{"session_start self-check:\nactive tools == profile allowlist?"}
+  CHECK -->|yes| OK(["render"]):::win
+  CHECK -->|no| WARN(["warn + freeze motion"]):::lose
+  classDef win fill:#0a1510,stroke:#39ff14,color:#39ff14
+  classDef lose fill:#1f0a12,stroke:#ff2a6d,color:#ff2a6d
+</div>
+
+<h2>3. Four topology profiles at a glance</h2>
+<table>
+<tr><th>Profile</th><th>Tools</th><th>Write/Bash</th><th>Subagents</th><th>Network</th><th>Motion</th><th>Thinking</th><th>Perf envelope</th></tr>
+<tr><td><b>default</b></td><td>read,bash,edit,write,grep,find,ls</td><td class="win">enabled</td><td>off</td><td>Pi default</td><td>live</td><td>high</td><td>baseline + ~1.8K tok/turn (scheduler)</td></tr>
+<tr><td><b>debug</b></td><td>read,grep,find,ls,bash</td><td class="lose">edit/write off; bash read-only</td><td>off (no fan-out)</td><td>read-only bash</td><td>live</td><td>medium</td><td>+ LSP server mgmt (pi-lens, gated)</td></tr>
+<tr><td><b>eval</b></td><td>read,grep,find,ls</td><td class="lose">all off</td><td class="win">pi-subagents read-only jury (≤3)</td><td class="lose">blocked (--offline)</td><td class="lose">frozen</td><td>high driver</td><td>fan-out per pi-subagents; no scheduler</td></tr>
+<tr><td><b>explore</b></td><td>read,grep,find,ls</td><td class="lose">edit/write off</td><td class="win">pi-subagents scout/researcher</td><td>agent-browser (gated)</td><td>live</td><td>high</td><td>highest tokens; +fan-out +cockpit 100ms tick</td></tr>
+</table>
+
+<h2>4. How profiles are selected</h2>
+<div class="mermaid">
+flowchart LR
+  A["--profile debug flag"] --> P["precedence:\nflag > env > default"]
+  B["PI_ACIDBATH_PROFILE=debug env"] --> P
+  C["(none) → default"] --> P
+  P --> L["scripts/launcher.sh\ncomposes explicit flags from config/profiles.json"]
+  L --> S["relaunch pane = switch profile\n(safe: tools register at session_start)"]
+  CMD["/topology debug\n(read-only)"] -.->|prints active + emits relaunch cmd| S
+</div>
+
+<footer>Source of truth: docs/PLAN.md §2 (inventory), §6 (topology spec). All facts cited to repo paths in PLAN.md.</footer>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:"dark",themeVariables:{primaryColor:"#0f0f17",primaryTextColor:"#cfeee6",primaryBorderColor:"#00d4aa",lineColor:"#39ff14",secondaryColor:"#1a1a2e",tertiaryColor:"#0a0a0f"}});</script>
+</body></html>

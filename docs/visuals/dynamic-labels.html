@@ -1,0 +1,125 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Acidbath — Dynamic Status Language (V1/V2)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+:root{--void:#0a0a0f;--teal:#00d4aa;--magenta:#ff0080;--acid:#39ff14;--amber:#ffb800;--purple:#bd00ff;--pink:#ff2a6d;--txt:#cfeee6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--void);color:var(--txt);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:32px 20px 80px}
+h1{font-size:26px;color:var(--teal);margin:0 0 4px}
+h2{font-size:19px;color:var(--amber);margin:42px 0 10px;border-bottom:1px solid #1a1a2e;padding-bottom:6px}
+.sub{color:#7fa;opacity:.8;margin:0 0 24px}
+.mermaid{background:#0c0c12;border:1px solid #142b26;border-radius:10px;padding:18px;margin:14px 0;overflow-x:auto}
+.card{background:#0f0f17;border:1px solid #142b26;border-radius:10px;padding:14px 18px;margin:14px 0}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0}
+th,td{border:1px solid #142b26;padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#12121c;color:var(--teal)}
+code{color:var(--acid);background:#0a1510;padding:1px 5px;border-radius:3px}
+.win{color:var(--acid)} .lose{color:var(--pink)} .warn{color:var(--amber)}
+footer{color:#567;margin-top:40px;font-size:12px}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;margin:1px}
+</style></head><body><div class="wrap">
+<h1>Dynamic Status Language — V1 Deterministic / V2 Adaptive</h1>
+<p class="sub">The orb state machine already exists in <code>index.ts</code>. V1 is a pure label synthesizer wired through <code>apply()</code>; V2 adds an optional, gated intent provider. No thinking-block parsing.</p>
+
+<h2>1. Current orb state machine (verified from index.ts)</h2>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> working : session_start
+  working --> solving : agent_start
+  solving --> listening : before_provider_request
+  listening --> solving : after_provider_response
+  solving --> composing : message_update
+  composing --> solving : (next event)
+  solving --> searching : tool_call(read/grep/find/ls/search)
+  solving --> shaping : tool_call(edit/write/apply_patch)
+  solving --> working : tool_call(other)
+  searching --> solving : tool_result
+  shaping --> solving : tool_result
+  working --> solving : agent_start (next turn)
+  solving --> working : agent_end (clear message)
+  note right of listening : "Waiting for provider response…"
+  note right of composing : "Composing reply…"
+  note right of searching : "Searching… / Searching in {path}"
+  note right of shaping : "Editing {file_path} / Writing {file_path}"
+</div>
+
+<h2>2. V1 — pure deterministic label synthesis</h2>
+<div class="mermaid">
+flowchart LR
+  E["agent event\nevent name + toolName"] --> S
+  R["render-time args\n(renderCall/renderResult)\nfile_path / command / pattern\nisError / isPartial"] --> S
+  S["synthesizeLabel(input)\nPURE — O(1), no I/O, no timers"]:::win --> O["{ orbState, message }"]
+  O --> APPLY["apply(ctx)\nchurn guard: only setWorkingMessage\nif string changed"]
+  APPLY --> DEBOUNCE["100ms trailing debounce\n≤1 label / 100ms window"]
+  DEBOUNCE --> RENDER["bounded label timer\nthen existing requestRender"]
+  classDef win fill:#0a1510,stroke:#39ff14,color:#39ff14
+</div>
+
+<div class="card">
+<b>What is deterministic from event payloads (confirmed):</b>
+<ul>
+<li><span class="win">event name</span> → orb state (already wired)</li>
+<li><span class="win">event.toolName</span> on <code>tool_call</code> → "Running {tool}…"</li>
+<li><span class="win">renderCall args</span> (<code>file_path</code>, <code>command</code>, <code>pattern</code>) → scoped labels like "Editing src/index.ts"</li>
+<li><span class="win">isError / isPartial</span> (render context) → "{tool} failed" / "Command finished"</li>
+</ul>
+<b>What is NOT deterministic (out of V1 scope):</b>
+<ul>
+<li><span class="lose">tool_result.content text</span> — free-form, tool-specific, unverified shape → do not parse</li>
+<li><span class="lose">thinking-block content</span> — <code>hideThinkingBlock:true</code>; only a placeholder label is set</li>
+</ul>
+</div>
+
+<h2>3. Label vocabulary</h2>
+<table>
+<tr><th>Event / condition</th><th>orbState</th><th>message</th><th>Source</th></tr>
+<tr><td>agent_start</td><td>solving</td><td>Solving…</td><td>event</td></tr>
+<tr><td>before_provider_request</td><td>listening</td><td>Waiting for provider response…</td><td>event</td></tr>
+<tr><td>after_provider_response</td><td>solving</td><td>Reasoning over response…</td><td>event</td></tr>
+<tr><td>message_update</td><td>composing</td><td>Composing reply…</td><td>event</td></tr>
+<tr><td>tool_call read/grep/find/ls</td><td>searching</td><td>Searching… / Searching in {path}</td><td>event + render args</td></tr>
+<tr><td>tool_call edit/write</td><td>shaping</td><td>Editing {file_path} / Writing {file_path}</td><td>render args</td></tr>
+<tr><td>tool_call bash</td><td>working</td><td>Running command…</td><td>render args (truncated)</td></tr>
+<tr><td>tool_call agy_subagent</td><td>working</td><td>Working on {subagent}…</td><td>args.subagent</td></tr>
+<tr><td>tool_call other</td><td>working</td><td>Running {toolName}…</td><td>event.toolName</td></tr>
+<tr><td>tool_result success (edit)</td><td>solving</td><td>Edited {basename} — V1.1: Edited {n} files</td><td>aggregate by toolCallId, reset agent_end</td></tr>
+<tr><td>tool_result error</td><td>solving</td><td>{toolName} failed</td><td>isError</td></tr>
+<tr><td>agent_end</td><td>working</td><td><i>cleared</i></td><td>event</td></tr>
+</table>
+
+<h2>4. V2 — optional adaptive intent (gated, fail-open)</h2>
+<div class="mermaid">
+flowchart TD
+  IN["LabelInput"] --> V1["synthesizeLabel (V1)"]:::win
+  IN --> PROVIDER{"intentProvider\nregistered?"}
+  PROVIDER -->|no| OUT1["V1 label"]:::win
+  PROVIDER -->|yes| REFINE["provider.refine(input, signals)\nsync ≤1ms"]
+  REFINE --> R{returns?}
+  R -->|string| MERGE["use refined label"]
+  R -->|null / throws / slow| OUT2["V1 fallback"]:::win
+  MERGE --> OUT
+  OUT1 --> OUT["LabelOutput"]
+  OUT2 --> OUT
+  SIG["signals (SAFE ONLY):\ntool details.subagent\n[subagent-result] envelopes\ntyped event.intent (future)"] -.-> REFINE
+  BAD["signals (NEVER):\nthinking text\nmodel output text\nfree-form tool_result.content"]:::lose -.->|rejected| REFINE
+  classDef win fill:#0a1510,stroke:#39ff14,color:#39ff14
+  classDef lose fill:#1f0a12,stroke:#ff2a6d,color:#ff2a6d
+</div>
+
+<h2>5. Latency / perf budget</h2>
+<table>
+<tr><th>Concern</th><th>Rule</th></tr>
+<tr><td>Max label-update frequency</td><td>1 per ~100ms (align to orb 95ms / motion 100ms)</td></tr>
+<tr><td>Debounce</td><td>trailing-edge 100ms; tool_call→tool_result = one label, not two</td></tr>
+<tr><td>Churn guard</td><td><code>setWorkingMessage</code> only when string changes (mirror gauge <code>alreadySettled</code>)</td></tr>
+<tr><td>New timers</td><td><span class="lose">none</span> — rides existing <code>requestRender</code></td></tr>
+<tr><td>Synthesis cost</td><td>O(1) &lt;50µs; no regex/FS/JSON.parse</td></tr>
+<tr><td>V2 refine budget</td><td>sync ≤1ms or skip → V1</td></tr>
+</table>
+
+<footer>Source of truth: docs/PLAN.md §4. Verified fields from extensions/acidbath/{index.ts,ui-tools.ts,ui-orb.ts}. Assumed fields (event payload beyond toolName) labeled in PLAN.md appendix.</footer>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:"dark",themeVariables:{primaryColor:"#0f0f17",primaryTextColor:"#cfeee6",primaryBorderColor:"#00d4aa",lineColor:"#39ff14"}});</script>
+</body></html>
