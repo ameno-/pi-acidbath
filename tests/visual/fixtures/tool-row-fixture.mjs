@@ -56,8 +56,10 @@ const activityRows = [
 process.stdout.write("\x1b[2J\x1b[H\x1b[?25l");
 process.stdout.write("ACIDBATH TOOL ROWS\n\n");
 for (const row of rows) process.stdout.write(`${row}\n`);
-process.stdout.write("\nACIDBATH BORDERLESS ACTIVITY\n\n");
+process.stdout.write("\nACIDBATH ACTIVITY WITH RULES\n");
+process.stdout.write(`${"─".repeat(72)}\n`);
 for (const row of activityRows) process.stdout.write(`${row}\n`);
+process.stdout.write(`${"─".repeat(72)}\n`);
 
 // Keep the PTY alive until the harness captures both text and PNG output.
 setInterval(() => {}, 1_000);

@@ -1,9 +1,9 @@
 # Acidbath visual smoke test
 
-This is the first isolated visual regression test. It exercises the compact tool-row and borderless activity presentation through a deterministic terminal fixture:
+This is the first isolated visual regression test. It exercises the compact tool-row and rule-framed activity presentation through a deterministic terminal fixture:
 
 - `tuistory` drives a fixed 80x12 PTY and captures text/PNG output.
-- The text snapshot catches semantic/layout changes, lifecycle glyphs, and fixed-width alignment.
+- The text snapshot catches semantic/layout changes, lifecycle glyphs, fixed-width alignment, and top/bottom rules.
 - `ffmpeg` computes PNG SSIM and writes a diff artifact on failure.
 - No Pi session, model call, filesystem mutation, or network access is used.
 

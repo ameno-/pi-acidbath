@@ -1,13 +1,14 @@
 /**
- * A bounded, above-editor activity viewport for tool calls.
+ * A bounded, transcript-ordered activity block for tool calls.
  *
- * It deliberately owns presentation only: tool execution and model-visible
- * results stay in ui-tools.ts and the native tool renderers.
+ * It is appended as a TUI-only entry at agent start, so it stays above the
+ * final assistant output while tool execution remains owned by ui-tools.ts
+ * and the native tool renderers.
  */
 
-import { truncateToWidth, visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { MotionClock, toolMotionGlyphForTool, type ToolMotionState } from "./ui-motion.ts";
+import { toolMotionGlyphForTool, type ToolMotionState } from "./ui-motion.ts";
 
 export function activityTarget(toolName: string, args: Record<string, unknown> | undefined): string {
 	const value = toolName === "bash"
@@ -202,102 +203,71 @@ export class ToolActivityStore {
 	}
 }
 
-export class ToolActivityPanel implements Component {
-	private readonly tui: TUI;
+export class ToolActivityTranscript implements Component {
 	private readonly theme: Theme;
 	private readonly store: ToolActivityStore;
-	private readonly clock: MotionClock;
 	private readonly reducedMotion: boolean;
 	private readonly noColor: boolean;
-	private readonly unsubscribe: () => void;
-	private readonly clockId = "acidbath-tool-activity";
 
-	constructor(
-		tui: TUI,
-		theme: Theme,
-		store: ToolActivityStore,
-		clock: MotionClock,
-		reducedMotion: boolean,
-		noColor: boolean,
-	) {
-		this.tui = tui;
-		this.theme = theme;
+	constructor(store: ToolActivityStore, theme: Theme, reducedMotion: boolean, noColor: boolean) {
 		this.store = store;
-		this.clock = clock;
+		this.theme = theme;
 		this.reducedMotion = reducedMotion;
 		this.noColor = noColor;
-		this.unsubscribe = store.subscribe(() => {
-			this.syncMotion();
-			tui.requestRender();
-		});
-		this.syncMotion();
 	}
 
 	render(width: number): string[] {
 		if (!this.store.isVisible() || this.store.entryCount() === 0) return [];
+		const safeWidth = Math.max(1, Math.trunc(width));
 		const snapshot = this.store.visibleEntries();
 		const activeLabel = snapshot.activeCount > 0 ? `${snapshot.activeCount} running` : "settled";
 		const heading = `◇ tools  ${activeLabel}`;
-		const lines: string[] = [this.background(this.noColor ? heading : this.theme.fg(snapshot.activeCount > 0 ? "accent" : "success", heading), width, "pending")];
+		const lines: string[] = [this.border(safeWidth), this.noColor ? heading : this.theme.fg(snapshot.activeCount > 0 ? "accent" : "success", heading)];
 
 		if (snapshot.hiddenAbove > 0) {
 			const hint = `↑ ${snapshot.hiddenAbove} earlier · /tools up`;
-			lines.push(this.background(this.noColor ? hint : this.theme.fg("dim", hint), width, "pending"));
+			lines.push(this.noColor ? hint : this.theme.fg("dim", hint));
 		}
-		for (const entry of snapshot.entries) lines.push(...this.renderEntry(entry, width).split("\n"));
+		for (const entry of snapshot.entries) lines.push(...this.renderEntry(entry, safeWidth));
 		if (snapshot.hiddenBelow > 0) {
 			const hint = `↓ ${snapshot.hiddenBelow} more · /tools down`;
-			lines.push(this.background(this.noColor ? hint : this.theme.fg("dim", hint), width, "pending"));
+			lines.push(this.noColor ? hint : this.theme.fg("dim", hint));
 		}
-		return lines.map((line) => truncateToWidth(line, Math.max(1, Math.trunc(width))));
+		lines.push(this.border(safeWidth));
+		return lines.map((line) => truncateToWidth(line, safeWidth));
 	}
 
-	invalidate(): void {
-		// Entries are small and intentionally rendered from the current store.
-	}
+	invalidate(): void {}
+	dispose(): void {}
 
-	dispose(): void {
-		this.unsubscribe();
-		this.clock.unsubscribe(this.clockId);
-	}
-
-	private renderEntry(entry: ToolActivityEntry, width: number): string {
-		const glyph = toolMotionGlyphForTool(entry.toolName, entry.status, this.clock.currentPhase(), this.reducedMotion);
+	private renderEntry(entry: ToolActivityEntry, width: number): string[] {
+		const glyph = toolMotionGlyphForTool(entry.toolName, entry.status, 0, this.reducedMotion);
 		const color = colorForStatus(entry.status);
 		const rail = fixedCell(this.noColor ? glyph : this.theme.fg(color, glyph), ACTIVITY_RAIL_WIDTH);
 		const target = entry.target ? ` ${this.noColor ? entry.target : this.theme.fg("dim", entry.target)}` : "";
 		const meta = entry.metadata.filter((value) => value && value !== "running").join(" · ");
 		const styledMeta = meta ? ` ${this.noColor ? `· ${meta}` : this.theme.fg("dim", `· ${meta}`)}` : "";
 		const tool = this.noColor ? entry.toolName : this.theme.fg(color, this.theme.bold(entry.toolName));
-		const safeWidth = Math.max(1, Math.trunc(width));
-		const lines = [this.background(`${rail}${tool}${target}${styledMeta}`, safeWidth, entry.status)];
+		const lines = [`${rail}${tool}${target}${styledMeta}`];
 		const previewLimit = this.store.isExpanded() ? 12 : 3;
 		for (let index = 0; index < Math.min(previewLimit, entry.previewLines.length); index++) {
 			const lastVisible = index === Math.min(previewLimit, entry.previewLines.length) - 1 && entry.previewHidden === 0;
 			const branch = lastVisible ? "└ " : "├ ";
 			const output = this.noColor ? entry.previewLines[index]! : this.theme.fg(entry.status === "error" ? "error" : "toolOutput", entry.previewLines[index]!);
 			const styledBranch = this.noColor ? branch : this.theme.fg("dim", branch);
-			lines.push(this.background(`${" ".repeat(ACTIVITY_RAIL_WIDTH)}${styledBranch}${output}`, safeWidth, entry.status));
+			lines.push(`${" ".repeat(ACTIVITY_RAIL_WIDTH)}${styledBranch}${output}`);
 		}
 		const hidden = Math.max(entry.previewHidden, entry.previewLines.length - previewLimit);
 		if (hidden > 0) {
 			const hint = `${" ".repeat(ACTIVITY_RAIL_WIDTH)}└ … ${hidden} more ${hidden === 1 ? "line" : "lines"} · expand`;
-			lines.push(this.background(this.noColor ? hint : this.theme.fg("dim", hint), safeWidth, entry.status));
+			lines.push(this.noColor ? hint : this.theme.fg("dim", hint));
 		}
-		return lines.join("\n");
+		return lines.map((line) => truncateToWidth(line, width));
 	}
 
-	private background(text: string, width: number, status: ToolMotionState): string {
-		const line = truncateToWidth(text, width);
-		const padded = `${line}${" ".repeat(Math.max(0, width - visibleWidth(line)))}`;
-		if (this.noColor) return padded;
-		const background = status === "error" ? "toolErrorBg" : status === "success" ? "toolSuccessBg" : "toolPendingBg";
-		return this.theme.bg(background, padded);
-	}
-
-	private syncMotion(): void {
-		if (this.store.hasPending()) this.clock.subscribe(this.clockId, () => this.tui.requestRender());
-		else this.clock.unsubscribe(this.clockId);
+	private border(width: number): string {
+		const line = "─".repeat(width);
+		return this.noColor ? line : this.theme.fg("border", line);
 	}
 }
 

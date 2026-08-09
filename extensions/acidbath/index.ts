@@ -30,7 +30,7 @@ import {
 	type OrbState,
 } from "./ui-orb.js";
 import { registerToolMotionRenderers } from "./ui-tools.js";
-import { activityPreview, activityTarget, ToolActivityPanel, ToolActivityStore } from "./ui-tool-activity.js";
+import { activityPreview, activityTarget, ToolActivityStore, ToolActivityTranscript } from "./ui-tool-activity.js";
 import { synthesizeLabel, type LabelInput, type LabelOutput } from "./ui-labels.js";
 import {
 	createTokenContextState,
@@ -55,7 +55,7 @@ const COLOR_ENABLED = process.env.NO_COLOR === undefined;
 const CONTEXT_POLL_MS = 1_000;
 const LABEL_DEBOUNCE_MS = 100;
 const CONTEXT_WIDGET_KEY = "acidbath-context";
-const TOOL_ACTIVITY_WIDGET_KEY = "acidbath-tool-activity";
+const TOOL_ACTIVITY_ENTRY_TYPE = "acidbath-tool-activity";
 
 function workingUi(ctx: ExtensionContext): WorkingUi {
 	return ctx.ui as unknown as WorkingUi;
@@ -158,8 +158,11 @@ export default function acidbath(pi: ExtensionAPI): void {
 	let lastWorkingMessage = "";
 	let footerWidget: AcidbathFooter | undefined;
 	let editorWidget: BorderlessEditor | undefined;
-	let toolActivityPanel: ToolActivityPanel | undefined;
 	const toolActivity = new ToolActivityStore();
+
+	pi.registerEntryRenderer(TOOL_ACTIVITY_ENTRY_TYPE, (_entry, _options, theme) =>
+		new ToolActivityTranscript(toolActivity, theme, REDUCED_MOTION, !COLOR_ENABLED),
+	);
 
 	const cancelLabelTimer = (): void => {
 		if (labelTimer !== undefined) {
@@ -387,16 +390,6 @@ export default function acidbath(pi: ExtensionAPI): void {
 		if (ctx.mode !== "tui") return;
 		ctx.ui.setHiddenThinkingLabel("Reasoning…");
 		ctx.ui.setWorkingVisible?.(false);
-		toolActivity.beginRun();
-		ctx.ui.setWidget(
-			TOOL_ACTIVITY_WIDGET_KEY,
-			(tui, theme) => {
-				toolActivityPanel?.dispose();
-				toolActivityPanel = new ToolActivityPanel(tui, theme, toolActivity, motionClock, REDUCED_MOTION, !COLOR_ENABLED);
-				return toolActivityPanel;
-			},
-			{ placement: "aboveEditor" },
-		);
 		ctx.ui.setEditorComponent((tui, theme, kb) => {
 			editorWidget?.dispose();
 			editorWidget = new BorderlessEditor(tui, theme, kb, motionClock);
@@ -457,6 +450,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 	pi.on("agent_start", async (_event, ctx) => {
 		generation = `run-${++contextSequence}`;
 		toolActivity.beginRun();
+		pi.appendEntry(TOOL_ACTIVITY_ENTRY_TYPE, { generation });
 		dispatchTokenEvent({ type: "agent_start", generation });
 		updateLabel({ event: "agent_start" }, ctx);
 	});
@@ -548,9 +542,6 @@ export default function acidbath(pi: ExtensionAPI): void {
 		footerWidget = undefined;
 		ctx.ui.setHeader(undefined);
 		ctx.ui.setFooter(undefined);
-		ctx.ui.setWidget(TOOL_ACTIVITY_WIDGET_KEY, undefined);
-		toolActivityPanel?.dispose();
-		toolActivityPanel = undefined;
 		toolActivity.clear();
 		toolMotion.dispose();
 		motionClock.dispose();
