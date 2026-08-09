@@ -3,6 +3,7 @@
 Standalone Pi package containing UI-focused enhancements extracted from `pi-herdr`:
 
 - Semantic working orb (`/orb`)
+- Dynamic ten-word session summary pinned to the active Pi header
 - Deterministic built-in tool lifecycle motion (`/motion`) with keyed compact rows
 - Borderless editor with fixed-width semantic orb frames and a light right-side context rail (`/context`)
 - Pure token/context lifecycle reducer with truthful unknown/final usage formatting

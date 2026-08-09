@@ -2,10 +2,26 @@
 
 export type ToolMotionState = "pending" | "success" | "error";
 
-// Every pending frame is four visible cells so the tool target never shifts
-// horizontally while the animation advances. The trailing cell is the column
-// separator shared by success and error statuses.
-export const TOOL_PENDING_FRAMES = ["... ", "·   ", "∙   ", "●   "] as const;
+// Every pending frame is four visible cells. The animated rail is rendered
+// separately from the status text, so the tool target and lifecycle color never
+// shift. Individual tools can opt into a distinct rail or no rail at all.
+export const TOOL_PENDING_FRAMES = ["·   ", "∘   ", "○   ", "●   "] as const;
+const SEARCH_FRAMES = ["·   ", "· · ", "⋅⋅  ", "· · "] as const;
+const SHAPE_FRAMES = ["✦   ", "✧   ", "⋄   ", "✧   "] as const;
+const COMMAND_FRAMES = [">   ", "»   ", "›   ", "»   "] as const;
+
+export type ToolMotionStyle = "default" | "search" | "shape" | "command" | "none";
+
+const TOOL_MOTION_STYLES: Readonly<Record<string, ToolMotionStyle>> = {
+	read: "search",
+	grep: "search",
+	find: "search",
+	ls: "none",
+	edit: "shape",
+	write: "shape",
+	bash: "command",
+};
+
 export const TOOL_SUCCESS_GLYPH = "✓";
 export const TOOL_ERROR_GLYPH = "×";
 export const TOOL_MOTION_INTERVAL_MS = 100;
@@ -94,8 +110,30 @@ export function parseMotionPhase(value: string | undefined): number | undefined 
 }
 
 export function toolMotionGlyph(state: ToolMotionState, phase: number, reducedMotion: boolean): string {
+	return toolMotionGlyphForTool(undefined, state, phase, reducedMotion);
+}
+
+export function toolMotionGlyphForTool(
+	toolName: string | undefined,
+	state: ToolMotionState,
+	phase: number,
+	reducedMotion: boolean,
+): string {
 	if (state === "success") return TOOL_SUCCESS_GLYPH;
 	if (state === "error") return TOOL_ERROR_GLYPH;
-	const selectedPhase = reducedMotion ? 0 : normalizeMotionPhase(phase, TOOL_PENDING_FRAMES.length);
-	return TOOL_PENDING_FRAMES[selectedPhase]!;
+	const style = toolName ? TOOL_MOTION_STYLES[toolName] ?? "default" : "default";
+	if (style === "none") return "    ";
+	const frames = style === "search"
+		? SEARCH_FRAMES
+		: style === "shape"
+			? SHAPE_FRAMES
+			: style === "command"
+			? COMMAND_FRAMES
+			: TOOL_PENDING_FRAMES;
+	const selectedPhase = reducedMotion ? 0 : normalizeMotionPhase(phase, frames.length);
+	return frames[selectedPhase]!;
+}
+
+export function toolMotionStyle(toolName: string): ToolMotionStyle {
+	return TOOL_MOTION_STYLES[toolName] ?? "default";
 }

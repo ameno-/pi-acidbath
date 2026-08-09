@@ -18,8 +18,11 @@ import {
 	TOOL_PENDING_FRAMES,
 	type ToolMotionState,
 	toolMotionGlyph,
+	toolMotionGlyphForTool,
+	toolMotionStyle,
 } from "./ui-motion.js";
 import { createCompactToolRenderers } from "./ui-tool-renderers.js";
+import type { ToolActivityUpdate } from "./ui-tool-activity.js";
 import type { LabelInput } from "./ui-labels.js";
 
 function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDetails, TState>(
@@ -29,6 +32,7 @@ function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDeta
 	reducedMotion: boolean,
 	noColor: boolean,
 	onLabel: ((input: LabelInput) => void) | undefined,
+	onActivity: ((update: ToolActivityUpdate) => void) | undefined,
 ): void {
 	const definition = factory(process.cwd());
 	const presentation = createCompactToolRenderers(definition, factory, {
@@ -36,6 +40,7 @@ function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDeta
 		reducedMotion,
 		noColor,
 		onLabel,
+		onActivity,
 	});
 
 	pi.registerTool({
@@ -66,18 +71,19 @@ export function registerToolMotionRenderers(
 		initialPhase?: string;
 		clock?: MotionClock;
 		onLabel?: (input: LabelInput) => void;
+		onActivity?: (update: ToolActivityUpdate) => void;
 	},
 ): ToolMotionControls {
 	const clock = options.clock ?? new MotionClock(options.reducedMotion, parseMotionPhase(options.initialPhase));
 	const ownsClock = options.clock === undefined;
 
-	registerWrappedTool(pi, createReadToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createBashToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createEditToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createWriteToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createGrepToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createFindToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createLsToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel);
+	registerWrappedTool(pi, createReadToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel, options.onActivity);
+	registerWrappedTool(pi, createBashToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel, options.onActivity);
+	registerWrappedTool(pi, createEditToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel, options.onActivity);
+	registerWrappedTool(pi, createWriteToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel, options.onActivity);
+	registerWrappedTool(pi, createGrepToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel, options.onActivity);
+	registerWrappedTool(pi, createFindToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel, options.onActivity);
+	registerWrappedTool(pi, createLsToolDefinition, clock, options.reducedMotion, options.noColor, options.onLabel, options.onActivity);
 
 	return {
 		dispose: () => {
@@ -88,5 +94,5 @@ export function registerToolMotionRenderers(
 	};
 }
 
-export { MotionClock, parseMotionPhase, TOOL_MOTION_INTERVAL_MS, TOOL_PENDING_FRAMES, toolMotionGlyph };
+export { MotionClock, parseMotionPhase, TOOL_MOTION_INTERVAL_MS, TOOL_PENDING_FRAMES, toolMotionGlyph, toolMotionGlyphForTool, toolMotionStyle };
 export type { ToolMotionState };

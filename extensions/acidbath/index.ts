@@ -19,6 +19,7 @@ import { ContextPyramidWidget, parseContextPlacement, type ContextPlacement } fr
 import { AcidbathFooter } from "./ui-footer.js";
 import { findEditorBottomBorderIndex } from "./ui-gauge.js";
 import { AcidbathHeader } from "./ui-header.js";
+import { DEFAULT_SESSION_SUMMARY, summarizeTask } from "./ui-summary.js";
 import { MotionClock, parseMotionPhase } from "./ui-motion.js";
 import {
 	indicatorFor,
@@ -29,6 +30,7 @@ import {
 	type OrbState,
 } from "./ui-orb.js";
 import { registerToolMotionRenderers } from "./ui-tools.js";
+import { ToolActivityPanel, ToolActivityStore } from "./ui-tool-activity.js";
 import { synthesizeLabel, type LabelInput, type LabelOutput } from "./ui-labels.js";
 import {
 	createTokenContextState,
@@ -53,6 +55,7 @@ const COLOR_ENABLED = process.env.NO_COLOR === undefined;
 const CONTEXT_POLL_MS = 1_000;
 const LABEL_DEBOUNCE_MS = 100;
 const CONTEXT_WIDGET_KEY = "acidbath-context";
+const TOOL_ACTIVITY_WIDGET_KEY = "acidbath-tool-activity";
 
 function workingUi(ctx: ExtensionContext): WorkingUi {
 	return ctx.ui as unknown as WorkingUi;
@@ -155,6 +158,8 @@ export default function acidbath(pi: ExtensionAPI): void {
 	let lastWorkingMessage = "";
 	let footerWidget: AcidbathFooter | undefined;
 	let editorWidget: BorderlessEditor | undefined;
+	let toolActivityPanel: ToolActivityPanel | undefined;
+	const toolActivity = new ToolActivityStore();
 
 	const cancelLabelTimer = (): void => {
 		if (labelTimer !== undefined) {
@@ -191,6 +196,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 		onLabel: (input) => {
 			if (lastContext) updateLabel(input, lastContext);
 		},
+		onActivity: (update) => toolActivity.update(update),
 	});
 	let mode: OrbMode = "auto";
 	let automaticState: OrbState = "working";
@@ -204,6 +210,12 @@ export default function acidbath(pi: ExtensionAPI): void {
 	let contextSequence = 0;
 	let generation = "session-0";
 	let headerWidget: AcidbathHeader | undefined;
+	let sessionSummary = DEFAULT_SESSION_SUMMARY;
+	let sessionContextPercent: number | undefined;
+
+	const updateHeader = (): void => {
+		headerWidget?.update({ summary: sessionSummary, contextPercent: sessionContextPercent });
+	};
 
 	const apply = (ctx: ExtensionContext): void => {
 		const ui = workingUi(ctx);
@@ -289,7 +301,9 @@ export default function acidbath(pi: ExtensionAPI): void {
 	const dispatchTokenEvent = (event: TokenContextEvent): void => {
 		tokenContext = reduceTokenContext(tokenContext, event);
 		contextPercent = tokenContext.facts?.contextPercent ?? undefined;
+		sessionContextPercent = contextPercent;
 		contextWidget?.updateTarget(contextPercent);
+		updateHeader();
 		footerWidget?.update({
 			contextPercent,
 			tokenContext,
@@ -362,6 +376,8 @@ export default function acidbath(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		lastContext = ctx;
+		sessionSummary = DEFAULT_SESSION_SUMMARY;
+		sessionContextPercent = undefined;
 		generation = `session-${++contextSequence}`;
 		tokenContext = createTokenContextState({ generation, reducedMotion: REDUCED_MOTION });
 		dispatchTokenEvent({ type: "agent_start", generation });
@@ -370,6 +386,16 @@ export default function acidbath(pi: ExtensionAPI): void {
 		if (ctx.mode !== "tui") return;
 		ctx.ui.setHiddenThinkingLabel("Reasoning…");
 		ctx.ui.setWorkingVisible?.(false);
+		toolActivity.beginRun();
+		ctx.ui.setWidget(
+			TOOL_ACTIVITY_WIDGET_KEY,
+			(tui, theme) => {
+				toolActivityPanel?.dispose();
+				toolActivityPanel = new ToolActivityPanel(tui, theme, toolActivity, motionClock, REDUCED_MOTION, !COLOR_ENABLED);
+				return toolActivityPanel;
+			},
+			{ placement: "aboveEditor" },
+		);
 		ctx.ui.setEditorComponent((tui, theme, kb) => {
 			editorWidget?.dispose();
 			editorWidget = new BorderlessEditor(tui, theme, kb, motionClock);
@@ -379,7 +405,8 @@ export default function acidbath(pi: ExtensionAPI): void {
 		const installHeader = (): void => {
 			ctx.ui.setHeader(
 			(tui, theme) => {
-				const header = new AcidbathHeader(tui, theme, ctx.model?.name, ctx.cwd, !COLOR_ENABLED);
+				const header = new AcidbathHeader(tui, theme, ctx.model?.name, ctx.cwd, !COLOR_ENABLED, sessionSummary);
+				header.update({ contextPercent: sessionContextPercent });
 				headerWidget = header;
 				return header;
 			},
@@ -418,8 +445,17 @@ export default function acidbath(pi: ExtensionAPI): void {
 		footerWidget?.update({ thinkingLevel });
 	});
 
+	pi.on("before_agent_start", async (event, ctx) => {
+		const nextSummary = summarizeTask(event.prompt, sessionSummary);
+		if (nextSummary !== sessionSummary) {
+			sessionSummary = nextSummary;
+			updateHeader();
+		}
+	});
+
 	pi.on("agent_start", async (_event, ctx) => {
 		generation = `run-${++contextSequence}`;
+		toolActivity.beginRun();
 		dispatchTokenEvent({ type: "agent_start", generation });
 		updateLabel({ event: "agent_start" }, ctx);
 	});
@@ -472,6 +508,10 @@ export default function acidbath(pi: ExtensionAPI): void {
 		footerWidget = undefined;
 		ctx.ui.setHeader(undefined);
 		ctx.ui.setFooter(undefined);
+		ctx.ui.setWidget(TOOL_ACTIVITY_WIDGET_KEY, undefined);
+		toolActivityPanel?.dispose();
+		toolActivityPanel = undefined;
+		toolActivity.clear();
 		toolMotion.dispose();
 		motionClock.dispose();
 		ctx.ui.setHiddenThinkingLabel();
@@ -482,6 +522,8 @@ export default function acidbath(pi: ExtensionAPI): void {
 		pendingLabel = undefined;
 		lastWorkingMessage = "";
 		contextPercent = undefined;
+		sessionContextPercent = undefined;
+		sessionSummary = DEFAULT_SESSION_SUMMARY;
 		tokenContext = createTokenContextState({ reducedMotion: REDUCED_MOTION });
 		contextSequence = 0;
 		generation = "session-0";
@@ -504,6 +546,38 @@ export default function acidbath(pi: ExtensionAPI): void {
 			if (ctx.mode === "tui") installContextWidget(ctx);
 			workingUi(ctx).notify(`Context display set to: ${contextPlacement}`, "info");
 		},
+	});
+
+	pi.registerCommand("tools", {
+		description: "Scroll or toggle the tool activity viewport.",
+		handler: async (args, ctx) => {
+			const value = args.trim().toLowerCase();
+			if (!value) {
+				workingUi(ctx).notify(`Tool activity: ${toolActivity.entryCount()} entries${toolActivity.isVisible() ? "" : " (hidden)"}`, "info");
+				return;
+			}
+			if (value === "up") toolActivity.scroll(1);
+			else if (value === "down") toolActivity.scroll(-1);
+			else if (value === "top") toolActivity.scrollToTop();
+			else if (value === "bottom") toolActivity.scrollToBottom();
+			else if (value === "show") toolActivity.setVisible(true);
+			else if (value === "hide") toolActivity.setVisible(false);
+			else if (value === "toggle") toolActivity.toggleVisible();
+			else if (value === "clear") toolActivity.clear();
+			else {
+				workingUi(ctx).notify("Usage: /tools [up|down|top|bottom|show|hide|toggle|clear]", "error");
+				return;
+			}
+		},
+	});
+
+	pi.registerShortcut("ctrl+shift+up", {
+		description: "Scroll tool activity history up.",
+		handler: async () => toolActivity.scroll(1),
+	});
+	pi.registerShortcut("ctrl+shift+down", {
+		description: "Scroll tool activity history down.",
+		handler: async () => toolActivity.scroll(-1),
 	});
 
 	pi.registerCommand("orb", {

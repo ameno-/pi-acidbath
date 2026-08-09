@@ -16,13 +16,13 @@ export interface ToolRowFormatInput {
 
 export function formatToolRow(input: ToolRowFormatInput): string {
 	const width = Math.max(1, Math.trunc(input.width));
+	// Pending animation lives in a dedicated fixed rail in the renderer. Keep
+	// this status cell static so the tool target cannot move as frames advance.
 	const status = input.status === "success"
 		? "ok  "
 		: input.status === "error"
 			? "ERR "
-			: input.reducedMotion
-				? "... "
-				: ["... ", "·   ", "∙   ", "●   "][normalize(input.phase ?? 0)]!;
+			: "run ";
 	const tool = clean(input.toolName) || "tool";
 	const target = clean(input.target) || "?";
 	// Status cells already include their full fixed width. Do not add a

@@ -1,14 +1,15 @@
 /** Compact-first tool renderers with native Pi detail views on expansion. */
 
+import { truncateToWidth as tuiTruncateToWidth, visibleWidth as tuiVisibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type {
 	Theme,
 	ToolDefinition,
 	ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-import { MotionClock, type ToolMotionState } from "./ui-motion.js";
-import { truncateToWidth, visibleWidth } from "./ui-gauge.js";
+import { MotionClock, toolMotionGlyphForTool, type ToolMotionState } from "./ui-motion.js";
 import { formatToolRow } from "./ui-tool-rows.js";
+import type { ToolActivityUpdate } from "./ui-tool-activity.js";
 import type { LabelInput } from "./ui-labels.js";
 
 interface ToolRowState {
@@ -55,6 +56,7 @@ export interface CompactToolRendererOptions {
 	reducedMotion: boolean;
 	noColor: boolean;
 	onLabel?: (input: LabelInput) => void;
+	onActivity?: (update: ToolActivityUpdate) => void;
 }
 
 class ToolRowComponent implements Component {
@@ -106,25 +108,31 @@ class ToolRowComponent implements Component {
 			expandable: this.row.status !== "pending" || Boolean(this.details) || this.row.truncated,
 			expanded: this.expanded,
 		});
-		const statusWidth = visibleWidth(plain.split(" ", 1)[0] ?? "");
-		const styled = this.noColor
-			? plain
-			: `${this.theme.fg(this.row.status === "error" ? "error" : this.row.status === "success" ? "success" : "dim", plain.slice(0, statusWidth))}${plain.slice(statusWidth)}`;
-		const lines = [truncateToWidth(styled, width)];
+		const lifecycleColor = this.row.status === "error" ? "error" : this.row.status === "success" ? "success" : "accent";
+		const styled = this.noColor ? plain : styleToolRow(plain, this.row.toolName, lifecycleColor, this.theme);
+		// Keep lifecycle animation in a dedicated four-cell rail. The glyph and
+		// tool name carry the state; no filled row or border is needed.
+		const glyph = toolMotionGlyphForTool(this.row.toolName, this.row.status, this.clock.currentPhase(), this.reducedMotion);
+		const rail = fixedActivityRail(glyph, this.row.status, this.theme, this.noColor);
+		// Native tool renderers can emit OSC-8 hyperlinks and other terminal
+		// sequences. Use Pi's width helpers here; the local gauge helpers are
+		// intentionally smaller and do not understand every sequence Pi emits.
+		const lines = [tuiTruncateToWidth(`${rail}${styled}`, width, "…")];
+		const indent = " ".repeat(4);
 		if (!this.expanded && this.previewLines.length > 0) {
 			const previewColor = this.row.status === "error" ? "error" : "toolOutput";
 			const previewRows = this.previewLines.length + (this.previewHidden > 0 ? 1 : 0);
-			for (let index = 0; index < this.previewLines.length; index++) {
-				const branch = index === previewRows - 1 ? "└ " : "├ ";
-				lines.push(truncateToWidth(`${this.theme.fg("dim", branch)}${this.theme.fg(previewColor, this.previewLines[index]!)}`, width));
+			for (const previewLine of this.previewLines) {
+				const preview = `${this.theme.fg("dim", "  ")}${this.theme.fg(previewColor, previewLine)}`;
+				lines.push(tuiTruncateToWidth(`${indent}${preview}`, width, "…"));
 			}
 			if (this.previewHidden > 0) {
 				const noun = this.previewHidden === 1 ? "line" : "lines";
-				lines.push(truncateToWidth(`${this.theme.fg("dim", "└ ")}… ${this.previewHidden} more ${noun} · expand`, width));
+				lines.push(tuiTruncateToWidth(`${indent}${this.theme.fg("dim", "  … ")}${this.previewHidden} more ${noun} · expand`, width, "…"));
 			}
 		}
 		if (this.expanded && this.details) {
-			for (const line of this.details.render(Math.max(1, width))) lines.push(truncateToWidth(line, width));
+			for (const line of this.details.render(Math.max(1, width))) lines.push(tuiTruncateToWidth(`${indent}${line}`, width, "…"));
 		}
 		return lines;
 	}
@@ -178,7 +186,7 @@ export function createCompactToolRenderers(
 	factory: (cwd: string) => AnyToolDefinition,
 	options: CompactToolRendererOptions,
 ): Pick<AnyToolDefinition, "renderCall" | "renderResult"> {
-	const { clock, reducedMotion, noColor, onLabel } = options;
+	const { clock, reducedMotion, noColor, onLabel, onActivity } = options;
 
 	return {
 		renderCall(args: unknown, theme: Theme, context: AnyRendererContext): Component {
@@ -190,6 +198,14 @@ export function createCompactToolRenderers(
 				isError: context.isError,
 			});
 			const row = getOrCreateRow(context, definition.name, args as Record<string, unknown>);
+			onActivity?.({
+				event: "start",
+				toolCallId: context.toolCallId,
+				toolName: definition.name,
+				target: row.target,
+				status: "pending",
+				metadata: ["running"],
+			});
 			// A call slot remains pending until its result slot settles. Once
 			// settled, do not reinstall its invalidation callback during redraw.
 			if (!row.settled) {
@@ -227,6 +243,14 @@ export function createCompactToolRenderers(
 				: metadataForTool(definition.name, row.args, result as Record<string, unknown>, row.durationMs);
 			row.truncated = hasTruncation(result as Record<string, unknown>);
 			const preview = previewForResult(definition.name, result);
+			onActivity?.({
+				event: "update",
+				toolCallId: context.toolCallId,
+				toolName: definition.name,
+				target: row.target,
+				status: row.status,
+				metadata: row.metadata,
+			});
 			row.previewLines = preview.lines;
 			row.previewHidden = preview.hidden;
 			if (row.status === "pending") {
@@ -322,6 +346,21 @@ function numberValue(value: unknown): number | undefined {
 
 function isRecord(value: unknown): value is Record<string, any> {
 	return typeof value === "object" && value !== null;
+}
+
+function styleToolRow(plain: string, toolName: string, color: "accent" | "success" | "error", theme: Theme): string {
+	const statusWidth = tuiVisibleWidth(plain.split(" ", 1)[0] ?? "");
+	const toolStart = statusWidth + 1;
+	const toolWidth = tuiVisibleWidth(toolName);
+	const toolEnd = Math.min(plain.length, toolStart + toolWidth);
+	return `${theme.fg(color, plain.slice(0, statusWidth))}${plain.slice(statusWidth, toolStart)}${theme.fg(color, plain.slice(toolStart, toolEnd))}${plain.slice(toolEnd)}`;
+}
+
+function fixedActivityRail(glyph: string, status: ToolMotionState, theme: Theme, noColor: boolean): string {
+	const safeGlyph = tuiTruncateToWidth(glyph, 4);
+	const padded = `${safeGlyph}${" ".repeat(Math.max(0, 4 - tuiVisibleWidth(safeGlyph)))}`;
+	if (noColor) return padded;
+	return theme.fg(status === "error" ? "error" : status === "success" ? "success" : "accent", padded);
 }
 
 function cleanInline(value: string): string {
