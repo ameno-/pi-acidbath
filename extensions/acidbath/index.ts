@@ -9,6 +9,7 @@
 
 import {
 	CustomEditor,
+	getAgentDir,
 	type ExtensionAPI,
 	type ExtensionContext,
 	type KeybindingsManager,
@@ -38,6 +39,13 @@ import {
 	type UsageFacts,
 } from "./ui-token-context.js";
 import { truncateToWidth } from "./ui-gauge.js";
+import {
+	AcidbathWelcome,
+	discoverSkillNames,
+	initialWelcomeState,
+	WELCOME_WIDGET_KEY,
+	type PreflightStatus,
+} from "./ui-welcome.js";
 
 interface WorkingUi {
 	setWorkingIndicator?: (options?: WorkingIndicatorOptions) => void;
@@ -58,92 +66,40 @@ function workingUi(ctx: ExtensionContext): WorkingUi {
 	return ctx.ui as unknown as WorkingUi;
 }
 
+const INPUT_PROMPT = "> ";
+const INPUT_PROMPT_WIDTH = 2;
+
 type EditorOrbState = OrbState | "done" | "idle" | "off";
 
-const ORB_SLOT_WIDTH = 4;
-
 class BorderlessEditor extends CustomEditor {
-	private readonly editorTheme: EditorTheme;
-	private readonly clock: MotionClock;
-	private orbState: EditorOrbState = "idle";
-	private inputEmpty = true;
-	private orbFrames: string[] = ["·  "];
-	private orbFrameIndex = 0;
-	private clockId = "editor-orb";
-
-	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, clock: MotionClock) {
+	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
 		super(tui, theme, keybindings, { paddingX: 0 });
-		this.editorTheme = theme;
-		this.clock = clock;
 	}
 
 	override setPaddingX(_paddingX: number): void {
-		// Keep the input origin stable: the left orb slot owns four columns.
+		// Keep the input origin stable behind the fixed terminal prompt.
 		super.setPaddingX(0);
 	}
 
-	override handleInput(data: string): void {
-		super.handleInput(data);
-		// Before submission, only an empty editor gets the subtle idle pulse.
-		// Once text exists, the orb is a stable token until agent_start arrives.
-		if (this.orbState === "idle" || this.orbState === "done") {
-			this.inputEmpty = this.getText().length === 0;
-			this.setOrbState("idle");
-		}
-	}
-
-	public setOrbState(state: EditorOrbState): void {
-		if (state === this.orbState && state !== "idle") return;
-		this.clock.unsubscribe(this.clockId);
-		this.orbState = state;
-		this.orbFrameIndex = 0;
-
-		if (state === "idle") {
-			const idleFrames = this.inputEmpty ? ["·  ", "· ·"] : ["·  "];
-			this.orbFrames = idleFrames.map((frame) => this.colorizeOrb(frame, false));
-			if (this.inputEmpty && !REDUCED_MOTION && idleFrames.length > 1) this.clock.subscribe(this.clockId, () => this.tui.requestRender());
-		} else if (state === "off") this.orbFrames = ["   "];
-		else if (state === "done") this.orbFrames = [this.colorizeOrb("✓  ", true)];
-		else {
-			// Use one expressive active animation in a distinct accent color. The
-			// semantic lifecycle remains in labels/tool rows, not in orb churn.
-			const indicator = indicatorFor("working", REDUCED_MOTION, false);
-			const frames = indicator.frames ?? ["·  "];
-			this.orbFrames = frames.map((frame) => this.colorizeOrb(frame, true));
-			if (!REDUCED_MOTION && frames.length > 1) this.clock.subscribe(this.clockId, () => this.tui.requestRender());
-		}
+	/** Retained as a compatibility hook; the input prompt itself is static. */
+	public setOrbState(_state: EditorOrbState): void {
 		this.tui.requestRender();
 	}
 
-	private colorizeOrb(frame: string, active: boolean): string {
-		if (!COLOR_ENABLED) return frame;
-		if (active) return this.editorTheme.borderColor(frame);
-		return `\x1b[38;5;240m${frame}\x1b[39m`;
-	}
-
 	override render(width: number): string[] {
-		const frame = this.orbFrames[this.frameIndex()] ?? this.orbFrames[0] ?? "·  ";
-		if (width <= ORB_SLOT_WIDTH) return [truncateToWidth(frame, Math.max(1, width))];
-		const innerWidth = Math.max(1, width - ORB_SLOT_WIDTH);
+		if (width <= INPUT_PROMPT_WIDTH) return [truncateToWidth(INPUT_PROMPT, Math.max(1, width))];
+		const innerWidth = Math.max(1, width - INPUT_PROMPT_WIDTH);
 		const lines = super.render(innerWidth);
 		if (lines.length > 0) lines.shift();
 		const bottomBorderIndex = findEditorBottomBorderIndex(lines, innerWidth);
 		if (bottomBorderIndex !== -1) lines.splice(bottomBorderIndex, 1);
 		else if (lines.length > 0) lines.pop();
 
-		// The frame is a complete token (including ANSI), never a sliced string.
-		const prefix = truncateToWidth(`${frame} `, ORB_SLOT_WIDTH);
-		return lines.map((line) => truncateToWidth(`${prefix}${line}`, width));
+		return lines.map((line) => truncateToWidth(`${INPUT_PROMPT}${line}`, width));
 	}
 
 	public dispose(): void {
-		this.clock.unsubscribe(this.clockId);
-	}
-
-	private frameIndex(): number {
-		if (this.orbFrames.length <= 1) return 0;
-		const phase = this.orbState === "idle" ? Math.floor(this.clock.currentPhase() / 2) : this.clock.currentPhase();
-		return phase % this.orbFrames.length;
+		// The static prompt has no animation resources to release.
 	}
 }
 
@@ -204,6 +160,74 @@ export default function acidbath(pi: ExtensionAPI): void {
 	let contextSequence = 0;
 	let generation = "session-0";
 	let headerWidget: AcidbathHeader | undefined;
+	let welcomeWidget: AcidbathWelcome | undefined;
+
+	const clearWelcome = (ctx: ExtensionContext): void => {
+		welcomeWidget = undefined;
+		ctx.ui.setWidget(WELCOME_WIDGET_KEY, undefined);
+	};
+
+	const setWelcomeCheck = (label: string, status: PreflightStatus, detail: string): void => {
+		welcomeWidget?.updateCheck(label, status, detail);
+	};
+
+	const runPreflight = async (ctx: ExtensionContext): Promise<void> => {
+		const widget = welcomeWidget;
+		if (!widget) return;
+
+		const runtimePromise = pi.exec("pi", ["--version"], { timeout: 2_000 });
+		const skillsPromise = discoverSkillNames(ctx.cwd, getAgentDir());
+
+		try {
+			const result = await runtimePromise;
+			const version = `${result.stdout}\n${result.stderr}`.trim().split(/\\r?\\n/)[0] || "unknown";
+			setWelcomeCheck("runtime", result.code === 0 ? "ok" : "warn", version.replace(/^pi\\s*/i, ""));
+		} catch {
+			setWelcomeCheck("runtime", "warn", "unavailable");
+		}
+
+		try {
+			const available = ctx.modelRegistry.getAvailable().length;
+			const model = ctx.model?.name ?? ctx.model?.id ?? "none";
+			setWelcomeCheck("model", ctx.model ? "ok" : "warn", `${model} · ${available} available`);
+		} catch {
+			setWelcomeCheck("model", "warn", "unavailable");
+		}
+
+		try {
+			setWelcomeCheck("tools", "ok", `${pi.getActiveTools().length} active`);
+		} catch {
+			setWelcomeCheck("tools", "warn", "unavailable");
+		}
+
+		try {
+			const skills = await skillsPromise;
+			widget.update({ skills });
+			setWelcomeCheck("skills", skills.length > 0 ? "ok" : "warn", `${skills.length} loaded`);
+		} catch {
+			setWelcomeCheck("skills", "warn", "unavailable");
+		}
+	};
+
+	const installWelcome = (ctx: ExtensionContext): void => {
+		clearWelcome(ctx);
+		if (ctx.mode !== "tui") return;
+		const initial = initialWelcomeState(
+			ctx.cwd,
+			ctx.model?.name ?? ctx.model?.id ?? "no model",
+			contextSequence,
+		);
+		ctx.ui.setWidget(
+			WELCOME_WIDGET_KEY,
+			(tui, theme) => {
+				const widget = new AcidbathWelcome(tui, theme, initial);
+				welcomeWidget = widget;
+				void runPreflight(ctx);
+				return widget;
+			},
+			{ placement: "aboveEditor" },
+		);
+	};
 
 	const apply = (ctx: ExtensionContext): void => {
 		const ui = workingUi(ctx);
@@ -372,7 +396,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 		ctx.ui.setWorkingVisible?.(false);
 		ctx.ui.setEditorComponent((tui, theme, kb) => {
 			editorWidget?.dispose();
-			editorWidget = new BorderlessEditor(tui, theme, kb, motionClock);
+			editorWidget = new BorderlessEditor(tui, theme, kb);
 			editorWidget.setOrbState(activeLabel?.orbState ?? "idle");
 			return editorWidget;
 		});
@@ -405,8 +429,13 @@ export default function acidbath(pi: ExtensionAPI): void {
 			return footer;
 		});
 		installContextWidget(ctx);
+		installWelcome(ctx);
 		pushContextUsage(ctx);
 		contextPollTimer = setInterval(() => pushContextUsage(ctx), CONTEXT_POLL_MS);
+	});
+
+	pi.on("before_agent_start", async (_event, ctx) => {
+		clearWelcome(ctx);
 	});
 
 	pi.on("model_select", async (event) => {
@@ -467,6 +496,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 		ui.setWorkingMessage?.();
 		ui.setWorkingVisible?.(true);
 		stopContext(ctx);
+		clearWelcome(ctx);
 		headerWidget = undefined;
 		footerWidget?.dispose();
 		footerWidget = undefined;
@@ -486,6 +516,32 @@ export default function acidbath(pi: ExtensionAPI): void {
 		contextSequence = 0;
 		generation = "session-0";
 		thinkingLevel = "default";
+	});
+
+	pi.registerCommand("preflight", {
+		description: "Show Acidbath startup metadata and rerun preflight checks.",
+		handler: async (_args, ctx) => {
+			if (ctx.mode !== "tui") return;
+			installWelcome(ctx);
+			workingUi(ctx).notify("Acidbath preflight running above the editor.", "info");
+		},
+	});
+
+	pi.registerCommand("acidbath-update", {
+		description: "Update Pi extensions, then update Pi itself.",
+		handler: async (_args, ctx) => {
+			if (!ctx.hasUI || !(await ctx.ui.confirm("Update Pi?", "Run `pi update --extensions`, then `pi update`?"))) return;
+			await ctx.waitForIdle();
+			workingUi(ctx).notify("Updating Pi extensions…", "info");
+			const extensions = await pi.exec("pi", ["update", "--extensions"], { timeout: 120_000 });
+			workingUi(ctx).notify(
+				extensions.code === 0 ? "Extensions updated. Updating Pi…" : "Extension update returned a warning; updating Pi…",
+				extensions.code === 0 ? "info" : "warning",
+			);
+			const self = await pi.exec("pi", ["update"], { timeout: 120_000 });
+			if (self.code === 0 && extensions.code === 0) workingUi(ctx).notify("Pi and extensions are up to date.", "info");
+			else workingUi(ctx).notify("Pi update finished with a warning; inspect the command output.", "warning");
+		},
 	});
 
 	pi.registerCommand("context", {
