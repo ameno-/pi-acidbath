@@ -1,0 +1,15 @@
+
+ACIDBATH TOOL ROWS
+
+ok  read docs/plan.md (214 lines, expand)
+run bash pnpm test --filter acidbath (running, expand)
+ERR edit extensions/acidbath/ui-tool-renderers.ts (old text not found, …
+
+ACIDBATH ACTIVITY WITH RULES
+────────────────────────────────────────────────────────────────────────
+· · read docs/plan.md
+»   bash pnpm test
+    ls src
+✓   edit ui-tool-renderers.ts
+×   write output.txt
+────────────────────────────────────────────────────────────────────────

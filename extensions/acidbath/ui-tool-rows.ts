@@ -16,16 +16,19 @@ export interface ToolRowFormatInput {
 
 export function formatToolRow(input: ToolRowFormatInput): string {
 	const width = Math.max(1, Math.trunc(input.width));
+	// Pending animation lives in a dedicated fixed rail in the renderer. Keep
+	// this status cell static so the tool target cannot move as frames advance.
 	const status = input.status === "success"
-		? "ok "
+		? "ok  "
 		: input.status === "error"
-			? "ERR"
-			: input.reducedMotion
-				? "..."
-				: ["...", "·  ", "∙  ", "●  "][normalize(input.phase ?? 0)]!;
+			? "ERR "
+			: "run ";
 	const tool = clean(input.toolName) || "tool";
 	const target = clean(input.target) || "?";
-	const required = `${status} ${tool} ${target}`;
+	// Status cells already include their full fixed width. Do not add a
+	// second separator here: that would make success/error rows wider than
+	// pending rows and create a subtle horizontal jump.
+	const required = `${status}${tool} ${target}`;
 	const metadata = [...(input.metadata ?? [])].map(clean).filter(Boolean);
 	if (input.expandable && !input.expanded) metadata.push("expand");
 	return truncate(metadata.length === 0 ? required : `${required} (${metadata.join(", ")})`, width);

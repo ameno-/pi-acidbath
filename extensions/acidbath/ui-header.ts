@@ -1,6 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "./ui-gauge.ts";
+import { DEFAULT_SESSION_SUMMARY } from "./ui-summary.ts";
 
 const WORDMARK_FONT: Record<string, readonly string[]> = {
 	A: [" ███ ", "█   █", "█████", "█   █", "█   █"],
@@ -25,6 +26,11 @@ export interface Rgb {
 	r: number;
 	g: number;
 	b: number;
+}
+
+export interface AcidbathHeaderState {
+	summary: string;
+	contextPercent?: number;
 }
 
 /** Extract a usable RGB value from the ANSI color emitted by a Pi theme. */
@@ -73,7 +79,13 @@ export function getWordmarkGradientPosition(index: number, phase: number): numbe
 	return index / Math.max(WORDMARK_BLOCK_WIDTH - 1, 1) + phase;
 }
 
-export function renderHeaderLines(width: number, theme: Theme, noColor = false): string[] {
+export function renderHeaderLines(
+	width: number,
+	theme: Theme,
+	noColor = false,
+	summary = DEFAULT_SESSION_SUMMARY,
+	contextPercent?: number,
+): string[] {
 	const lineWidth = Math.max(1, Math.trunc(width));
 	const base = parseForegroundRgbFromAnsi(theme.getFgAnsi("accent")) ?? FALLBACK_BASE_RGB;
 	const palette = buildGradientPalette(base);
@@ -82,7 +94,9 @@ export function renderHeaderLines(width: number, theme: Theme, noColor = false):
 		return fitLineToWidth(painted, lineWidth);
 	});
 	const tagline = noColor ? HEADER_TAGLINE : theme.fg("muted", HEADER_TAGLINE);
-	return ["", ...wordmark, "", fitLineToWidth(tagline, lineWidth), ""];
+	const context = contextPercent === undefined ? "" : ` · ctx ${Math.round(Math.max(0, Math.min(1, contextPercent)) * 100)}%`;
+	const status = noColor ? `${summary}${context}` : theme.fg("text", `${summary}${context}`);
+	return ["", ...wordmark, "", fitLineToWidth(tagline, lineWidth), fitLineToWidth(status, lineWidth), ""];
 }
 
 /** Fit a styled line without allowing ANSI sequences to affect alignment. */
@@ -153,16 +167,25 @@ const BASIC_ANSI_RGB: Record<number, Rgb> = {
 };
 
 export class AcidbathHeader implements Component {
+	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly noColor: boolean;
+	private state: AcidbathHeaderState;
 
-	constructor(_tui: TUI, theme: Theme, _modelName: string | undefined, _cwd: string, noColor: boolean) {
+	constructor(_tui: TUI, theme: Theme, _modelName: string | undefined, _cwd: string, noColor: boolean, summary = DEFAULT_SESSION_SUMMARY) {
+		this.tui = _tui;
 		this.theme = theme;
 		this.noColor = noColor;
+		this.state = { summary };
+	}
+
+	public update(next: Partial<AcidbathHeaderState>): void {
+		this.state = { ...this.state, ...next };
+		this.tui.requestRender();
 	}
 
 	public render(width: number): string[] {
-		return renderHeaderLines(width, this.theme, this.noColor);
+		return renderHeaderLines(width, this.theme, this.noColor, this.state.summary, this.state.contextPercent);
 	}
 
 	public invalidate(): void {

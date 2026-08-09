@@ -30,7 +30,8 @@
     "typescript": "^5.8.3"
   },
   "scripts": {
-    "test": "node --experimental-strip-types --no-warnings scripts/test-package-manifest.mjs && node --experimental-strip-types --no-warnings scripts/test-context-pyramid.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-labels.mjs && node --experimental-strip-types --no-warnings scripts/test-token-context.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-summary.mjs",
+    "test": "node --experimental-strip-types --no-warnings scripts/test-package-manifest.mjs && node --experimental-strip-types --no-warnings scripts/test-context-pyramid.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-labels.mjs && node --experimental-strip-types --no-warnings scripts/test-token-context.mjs && node --experimental-strip-types --no-warnings scripts/test-tool-motion.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-summary.mjs",
+    "test:visual": "node --experimental-strip-types --no-warnings tests/visual/test-tool-row-visual.mjs",
     "typecheck": "tsc --noEmit"
   },
   "pi": {
