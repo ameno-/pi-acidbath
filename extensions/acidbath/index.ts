@@ -30,7 +30,7 @@ import {
 	type OrbState,
 } from "./ui-orb.js";
 import { registerToolMotionRenderers } from "./ui-tools.js";
-import { ToolActivityPanel, ToolActivityStore } from "./ui-tool-activity.js";
+import { activityPreview, activityTarget, ToolActivityPanel, ToolActivityStore } from "./ui-tool-activity.js";
 import { synthesizeLabel, type LabelInput, type LabelOutput } from "./ui-labels.js";
 import {
 	createTokenContextState,
@@ -191,6 +191,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 	const toolMotion = registerToolMotionRenderers(pi, {
 		reducedMotion: REDUCED_MOTION,
 		noColor: !COLOR_ENABLED,
+		hideTranscript: true,
 		initialPhase: INITIAL_MOTION_PHASE,
 		clock: motionClock,
 		onLabel: (input) => {
@@ -479,6 +480,45 @@ export default function acidbath(pi: ExtensionAPI): void {
 		updateLabel({ event: "tool_result", toolName: event.toolName, isError: event.isError }, ctx);
 		pushContextUsage(ctx);
 	});
+	// Capture custom tools (including pi-research) in the same viewport. The
+	// wrapped built-ins also emit these lifecycle events; store de-duplication
+	// keeps their renderer updates authoritative.
+	pi.on("tool_execution_start", async (event) => {
+		toolActivity.update({
+			event: "start",
+			toolCallId: event.toolCallId,
+			toolName: event.toolName,
+			target: activityTarget(event.toolName, event.args as Record<string, unknown>),
+			status: "pending",
+			metadata: ["running"],
+		});
+	});
+	pi.on("tool_execution_update", async (event) => {
+		const preview = activityPreview(event.partialResult);
+		toolActivity.update({
+			event: "update",
+			toolCallId: event.toolCallId,
+			toolName: event.toolName,
+			target: activityTarget(event.toolName, event.args as Record<string, unknown>),
+			status: "pending",
+			metadata: ["running"],
+			previewLines: preview.lines,
+			previewHidden: preview.hidden,
+		});
+	});
+	pi.on("tool_execution_end", async (event) => {
+		const preview = activityPreview(event.result);
+		toolActivity.update({
+			event: "update",
+			toolCallId: event.toolCallId,
+			toolName: event.toolName,
+			target: toolActivity.targetFor(event.toolCallId),
+			status: event.isError ? "error" : "success",
+			metadata: [event.isError ? "failed" : "done"],
+			previewLines: preview.lines,
+			previewHidden: preview.hidden,
+		});
+	});
 
 	pi.on("agent_end", async (event, ctx) => {
 		pushFinalUsage(event.messages);
@@ -553,7 +593,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 		handler: async (args, ctx) => {
 			const value = args.trim().toLowerCase();
 			if (!value) {
-				workingUi(ctx).notify(`Tool activity: ${toolActivity.entryCount()} entries${toolActivity.isVisible() ? "" : " (hidden)"}`, "info");
+				workingUi(ctx).notify(`Tool activity: ${toolActivity.entryCount()} entries${toolActivity.isVisible() ? "" : " (hidden)"}${toolActivity.isExpanded() ? " (expanded)" : ""}`, "info");
 				return;
 			}
 			if (value === "up") toolActivity.scroll(1);
@@ -563,9 +603,11 @@ export default function acidbath(pi: ExtensionAPI): void {
 			else if (value === "show") toolActivity.setVisible(true);
 			else if (value === "hide") toolActivity.setVisible(false);
 			else if (value === "toggle") toolActivity.toggleVisible();
+			else if (value === "expand") toolActivity.setExpanded(true);
+			else if (value === "compact") toolActivity.setExpanded(false);
 			else if (value === "clear") toolActivity.clear();
 			else {
-				workingUi(ctx).notify("Usage: /tools [up|down|top|bottom|show|hide|toggle|clear]", "error");
+				workingUi(ctx).notify("Usage: /tools [up|down|top|bottom|show|hide|toggle|expand|compact|clear]", "error");
 				return;
 			}
 		},

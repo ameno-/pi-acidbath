@@ -23,13 +23,13 @@ for (let i = 0; i < 8; i += 1) {
 }
 
 let view = store.visibleEntries();
-assert("viewport is bounded", view.entries.length === 6);
+assert("viewport is bounded", view.entries.length === 4);
 assert("newest entries are pinned at bottom", view.entries.at(-1)?.target === "file-7.ts");
-assert("older entries report hidden above", view.hiddenAbove === 2);
+assert("older entries report hidden above", view.hiddenAbove === 4);
 
 store.scroll(1);
 view = store.visibleEntries();
-assert("scrolling upward reveals older entries", view.entries[0]?.target === "file-1.ts");
+assert("scrolling upward reveals older entries", view.entries[0]?.target === "file-3.ts");
 assert("newer entries report hidden below", view.hiddenBelow === 1);
 
 store.scrollToTop();
