@@ -613,11 +613,11 @@ export default function acidbath(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut("ctrl+shift+up", {
+	pi.registerShortcut("ctrl+alt+up", {
 		description: "Scroll tool activity history up.",
 		handler: async () => toolActivity.scroll(1),
 	});
-	pi.registerShortcut("ctrl+shift+down", {
+	pi.registerShortcut("ctrl+alt+down", {
 		description: "Scroll tool activity history down.",
 		handler: async () => toolActivity.scroll(-1),
 	});
