@@ -1,6 +1,6 @@
 # Acidbath Umbrella — Integration Roadmap
 
-Status: **Implementation in progress.** Visual appearance changes remain human-gated; the approved V1 label infrastructure is wired. All facts are cited to file paths or fetched repos; inferences are labeled.
+Status: **historical roadmap.** The current implementation uses one full development composition with no Acidbath capability profiles. The orb, context-pyramid, footer-lyric, and tool-motion surfaces have been archived; see `README.md`, `docs/COHESIVE-IMPLEMENTATION-PLAN.md`, and `docs/ast-grep-evaluation.md` for current behavior. All facts below are retained as historical evidence, not active implementation instructions.
 
 Companion visuals (open in a browser):
 - `docs/visuals/architecture-overview.html` — umbrella architecture + 4 topology profiles
