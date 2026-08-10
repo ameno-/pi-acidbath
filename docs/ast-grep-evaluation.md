@@ -2,22 +2,23 @@
 
 ## Current finding
 
-AST-grep is not currently a Pi mode problem. The host has `ast-grep 0.45.0`
-installed at `/opt/homebrew/bin/ast-grep`, but the configured `pi-ast-grep`
-package is an object-form global package entry and Pi reports it as filtered.
-Acidbath does not currently load an AST-grep extension.
+AST-grep was not a Pi mode problem. The host has `ast-grep 0.45.0` installed at
+`/opt/homebrew/bin/ast-grep`; the previously configured `pi-ast-grep` package
+was an object-form global entry and Pi reported it as filtered. Acidbath now
+loads the safer `@juvio15/pi-ast-grep@0.4.2` extension directly in its full
+package composition.
 
 ## Candidate comparison
 
 | Candidate | Search | Rewrite safety | Process/security | Recommendation |
 |---|---|---|---|---|
 | `code-yeongyu/pi-ast-grep` | Focused `ast_grep_search`; good structured output | `ast_grep_replace` is dry-run by default, but `dryRun=false` applies directly without a human confirmation; paths are broadly accepted | argv-based CLI, bounded output, but includes a last-resort GitHub binary download | Good search reference; do not enable mutation unchanged |
-| `bjoernaagaard/pi-ast-grep` / `@juvio15/pi-ast-grep` | `run`, `scan`, `outline`, language catalog; bounded matches, context, threads | Rewrite defaults to preview, records a preview fingerprint, requires the matching preview before headless apply, and uses Pi's file mutation queue | Explicit argv CLI, bounded schemas, deterministic PATH/env resolution, no auto-download | Safest current extension candidate; prefer after compatibility smoke test |
+| `bjoernaagaard/pi-ast-grep` / `@juvio15/pi-ast-grep` | `run`, `scan`, `outline`, language catalog; bounded matches, context, threads | Rewrite defaults to preview, records a preview fingerprint, requires the matching preview before headless apply, confirms in interactive sessions, and uses Pi's file mutation queue | Explicit argv CLI, bounded schemas, deterministic PATH/env resolution, no auto-download | **Selected**; package tests and local `sg` smoke test pass |
 | `oh-my-pi` native AST tools | Fast in-process structural search/edit | Separate read and edit permission surfaces; native implementation avoids CLI/IPC | Not compatible as a dependency: it uses a separate `@oh-my-pi/*` runtime | Reference only |
 | Raw `sg` CLI | Fast and reliable for local execution | No Pi-level confirmation, preview bookkeeping, or mutation queue | Safe only when wrapped with argv, path bounds, output caps, and a trusted binary path | Engine only, not the model-facing integration |
 | Plain `grep` / `rg` | Best for literal text and regex | No structural rewrite | Mature and fast, but syntax-blind | Keep for text search; AST-grep is complementary |
 
-## Proposed Acidbath policy
+## Acidbath policy now implemented
 
 1. Load AST-grep search by default in the single full-development composition.
 2. Prefer `bjoernaagaard/pi-ast-grep` if its Pi 0.84 compatibility smoke test

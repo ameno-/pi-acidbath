@@ -8,8 +8,11 @@ const researchSpec = packageJson.dependencies?.["pi-research"] ?? "";
 assert.match(researchSpec, /^git\+https:\/\/github\.com\/ameno-\/pi-research\.git#/);
 assert.deepEqual(packageJson.bundledDependencies, ["pi-research"]);
 assert.equal(packageJson.dependencies?.["pi-web-access"], "0.20.0");
+assert.equal(packageJson.dependencies?.["@juvio15/pi-ast-grep"], "0.4.2");
 assert.ok(packageJson.pi.extensions.includes("./node_modules/pi-research/extension/index.ts"));
 assert.ok(packageJson.pi.extensions.includes("./node_modules/pi-web-access/index.ts"));
+assert.ok(packageJson.pi.extensions.includes("./node_modules/@juvio15/pi-ast-grep/src/index.ts"));
 assert.ok(existsSync(new URL("../node_modules/pi-web-access/index.ts", import.meta.url)));
+assert.ok(existsSync(new URL("../node_modules/@juvio15/pi-ast-grep/src/index.ts", import.meta.url)));
 
-console.log("package manifest: pi-research and pi-web-access enabled");
+console.log("package manifest: pi-research, pi-web-access, and ast-grep enabled");
