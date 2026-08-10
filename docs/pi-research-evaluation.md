@@ -61,6 +61,22 @@ the script but should remain opt-in and user-confirmed.
 - The README's eval harness is promising, but quality scoring is not yet an
   objective/independent judge and the benchmark should be run before adoption.
 
+## Current Acidbath decision
+
+Acidbath now installs `pi-web-access@0.20.0` as a direct dependency and loads
+its extension explicitly alongside `pi-research`. This makes `fetch_content`,
+`get_search_content`, `source_check`, and the direct `web_search` capability
+available to the primary Pi. AGY remains usable without those tools; after an
+AGY result returns URLs, the primary Pi can use `fetch_content` and
+`source_check` for extraction and evidence instead of pretending AGY can call a
+parent Pi tool.
+
+The existing `pi-research` package still has a stale availability heuristic: it
+checks only the global Pi npm directory, so its deep-research prompt may say
+pi-web-access is unavailable even when the local Acidbath package has loaded it.
+The tools themselves are available; fixing that heuristic belongs in the next
+pi-research hardening pass rather than patching `node_modules`.
+
 ## Recommendation
 
 **Study/adopt behind an explicit opt-in profile, not the default Acidbath

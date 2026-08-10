@@ -147,7 +147,7 @@ Deterministic label vocabulary (confirmed fields only):
 
 ### V2 — optional adaptive intent (gated)
 
-Additive: `synthesizeLabel` calls `intentProvider?.refine(...) ?? v1Fallback`. `refine` is synchronous, ≤1ms, fail-open. **Safe signals only:** tool `details` objects (agy already returns `details.subagent`), structured `[subagent-result]` envelopes, or a future **typed** `event.intent` field gated by capability check. **Raw thinking text is permanently out of scope** (`hideThinkingBlock:true`; `setHiddenThinkingLabel("Reasoning…")` only sets a placeholder label, does not expose content).
+Additive: `synthesizeLabel` calls `intentProvider?.refine(...) ?? v1Fallback`. `refine` is synchronous, ≤1ms, fail-open. **Safe signals only:** tool `details` objects (agy already returns `details.subagent`), structured `[subagent-result]` envelopes, or a future **typed** `event.intent` field gated by capability check. **Raw thinking text remains permanently out of scope for label synthesis and state inference.** The live activity widget may render a terminal-safe, bounded tail preview of provider-supplied thinking as display-only content; it does not feed `synthesizeLabel`, session context, or tool decisions.
 
 ### Latency / perf budget
 
@@ -281,7 +281,7 @@ symlinks; and global discovery remains blocked.
 | Acidbath = umbrella (absorb pi-herdr exts) | **Adopt** | One package, one `packages` entry, single source of truth | None (same code, new home) | Import remap misses → silent filter | Drop heritage entries from manifest |
 | Bring `pi-herdr-ui.ts` into acidbath | **Reject** | — | — | `/orb`+`/motion`+gauge collision (HIGH) | n/a |
 | V1 labels deterministic-only | **Adopt** | Predictable, testable, no model coupling | O(1), no new timers | Label churn | Fallback to `ORB_LABELS` |
-| V2 thinking-block labels | **Reject (now)** | — | — | Non-deterministic, provider-variant | n/a; revisit if typed `intent` field ships |
+| V2 thinking-derived lifecycle labels | **Reject (now)** | — | — | Non-deterministic, provider-variant | Keep thinking limited to the display-only live preview; revisit state inference only if typed `intent` ships |
 | `pi-subagents` for subagents | **Adopt (P3)** | Fleet, workflows, async delegation | Subagent fan-out cost | Cmd-name audit needed | Disable package |
 | `pi-autoresearch` for tool evals | **Adopt (P4)** | Experiment loop + confidence scoring | Loop runs burn tokens (cap via maxIterations) | Cost runaway | maxIterations + API key limits |
 | `metaharness` | **Study (P4)** | Benchmark rigor | Container overhead | Large dep, Docker-oriented | Don't depend; borrow model |

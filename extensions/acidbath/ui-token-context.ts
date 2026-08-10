@@ -184,19 +184,21 @@ export function formatContextFact(facts: UsageFacts | null): string {
 }
 
 export function formatTurnUsage(facts: UsageFacts | null): string {
-	if (!facts || facts.inputTokens === null && facts.outputTokens === null) return "turn ?";
-	const input = facts.inputTokens === null ? "?" : formatCount(facts.inputTokens);
-	const output = facts.outputTokens === null ? "?" : formatCount(facts.outputTokens);
-	return `turn ${input} in / ${output} out`;
+	const inputValue = facts?.inputTokens;
+	const outputValue = facts?.outputTokens;
+	const input = inputValue === null || inputValue === undefined ? "0" : formatCount(inputValue);
+	const output = outputValue === null || outputValue === undefined ? "0" : formatCount(outputValue);
+	// Keep both fields fixed-width so usage updates cannot move the footer dock.
+	return `turn ${input.padStart(3, " ")} in / ${output.padStart(3, " ")} out`;
 }
 
 /** The default footer deliberately shows pressure as a light rail, not a second percentage fact. */
 export function formatContextRail(state: TokenContextState, width: number, reducedMotion = state.motionReduced): string {
 	const facts = state.facts;
-	if (!facts || facts.contextPercent === null) return truncateToWidth("ctx ?", width);
 	const label = "ctx ";
-	const maxSlots = width >= 120 ? 24 : width >= 80 ? 16 : width >= 60 ? 12 : Math.max(4, Math.floor((width - visibleWidth(label)) / 2));
-	const slots = Math.max(1, Math.min(maxSlots, width - visibleWidth(label)));
+	// Unknown pressure is still a complete rail: empty cells communicate no data
+	// without introducing a question mark or changing the dock width.
+	const slots = Math.max(1, width - visibleWidth(label));
 	const cells = railCells(state, slots, reducedMotion);
 	return truncateToWidth(`${label}${cells}`, width);
 }

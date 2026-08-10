@@ -18,7 +18,7 @@
     "borderAccent": "purple",
     "borderMuted": 240,
     "success": "acid",
-    "error": "magenta",
+    "error": "#ff3b30",
     "warning": "amber",
     "muted": 242,
     "dim": 240,

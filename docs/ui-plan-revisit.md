@@ -30,8 +30,10 @@ implementation facts are in `extensions/acidbath/index.ts`, `ui-labels.ts`,
    `NO_COLOR=1`.
 4. **Motion is subordinate.** Animation draws attention only while work is
    pending; success/error settle immediately.
-5. **No model-generated status.** V1 labels use lifecycle events and structured
-   render arguments only; thinking text remains out of scope.
+5. **No model-generated lifecycle status.** V1 labels still use lifecycle events
+   and structured render arguments only. Provider-supplied thinking may appear
+   only in the dedicated display-only live preview; it never drives state or
+   enters synthesized labels.
 6. **Bounded layout.** Labels truncate deterministically; the gauge degrades
    cleanly at narrow widths.
 

@@ -1,7 +1,6 @@
-import { access, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ModelCost } from "@earendil-works/pi-ai";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "./ui-gauge.ts";
 
@@ -19,10 +18,19 @@ export interface StoicMessage {
 	source: string;
 }
 
+export type SpendTier = "low" | "default" | "high";
+
+export interface ModelCard {
+	modelName: string;
+	cost: ModelCost | null;
+	spendTier: SpendTier;
+	thinkingLevel: string;
+}
+
 export interface WelcomeState {
 	cwd: string;
 	model: string;
-	skills: string[];
+	modelCard: ModelCard;
 	checks: PreflightCheck[];
 	message: StoicMessage;
 	updateHint: string;
@@ -39,10 +47,43 @@ export const STOIC_MESSAGES: readonly StoicMessage[] = [
 	{ text: "First say what you would be; then do what you have to do.", author: "Epictetus", source: "Discourses, adapted" },
 	{ text: "The best revenge is not to be like your enemy.", author: "Marcus Aurelius", source: "Meditations, adapted" },
 	{ text: "We are made for cooperation, like feet and hands.", author: "Marcus Aurelius", source: "Meditations, adapted" },
+	{ text: "If it is not right, do not do it; if it is not true, do not say it.", author: "Marcus Aurelius", source: "Meditations, adapted" },
+	{ text: "No man is more unhappy than he who never faces adversity.", author: "Seneca", source: "Letters, adapted" },
+	{ text: "It is not things that disturb us, but our judgments about things.", author: "Epictetus", source: "Enchiridion, adapted" },
+	{ text: "Luck is what happens when preparation meets opportunity.", author: "Seneca, attributed", source: "Fragments, adapted" },
+	{ text: "The whole future lies in uncertainty: live immediately.", author: "Seneca", source: "Letters, adapted" },
+	{ text: "Waste no more time arguing what a good person should be.", author: "Marcus Aurelius", source: "Meditations, adapted" },
+	{ text: "The happiness of your life depends upon the quality of your thoughts.", author: "Marcus Aurelius", source: "Meditations, adapted" },
+	{ text: "Difficulties show what men are.", author: "Epictetus", source: "Discourses, adapted" },
+	{ text: "He who fears death will never do anything worthy of a living man.", author: "Seneca", source: "Letters, adapted" },
+	{ text: "No great thing is created suddenly.", author: "Epictetus", source: "Discourses, adapted" },
+	{ text: "Begin at once to live, and count each separate day as a separate life.", author: "Seneca", source: "Letters, adapted" },
+	{ text: "The key is to keep company only with people who uplift you.", author: "Epictetus", source: "Discourses, adapted" },
+	{ text: "Do every act of your life as though it were the very last act of your life.", author: "Marcus Aurelius", source: "Meditations, adapted" },
+	{ text: "A gem cannot be polished without friction.", author: "Seneca, attributed", source: "Fragments, adapted" },
+	{ text: "The mind adapts and converts to its purposes the obstacle to our acting.", author: "Marcus Aurelius", source: "Meditations, adapted" },
+	{ text: "It is the power of the mind to be unconquerable.", author: "Seneca", source: "Letters, adapted" },
+	{ text: "Freedom is the only worthy goal in life.", author: "Epictetus", source: "Discourses, adapted" },
+	{ text: "The wise man is content with his lot, whatever it may be.", author: "Seneca", source: "Letters, adapted" },
 ];
+
+export function modelCardFor(modelName: string, cost: ModelCost | null | undefined, thinkingLevel = "default"): ModelCard {
+	const normalizedCost = cost && Number.isFinite(cost.input) && Number.isFinite(cost.output) ? cost : null;
+	const score = normalizedCost === null
+		? 0
+		: normalizedCost.input + normalizedCost.output * 2 + normalizedCost.cacheRead * 0.25;
+	const spendTier: SpendTier = normalizedCost === null ? "default" : score <= 2 ? "low" : score >= 10 ? "high" : "default";
+	return { modelName: modelName || "no model", cost: normalizedCost, spendTier, thinkingLevel: thinkingLevel || "default" };
+}
 
 export function messageForSession(sequence: number): StoicMessage {
 	return STOIC_MESSAGES[Math.abs(Math.trunc(sequence)) % STOIC_MESSAGES.length]!;
+}
+
+export function randomStoicMessage(random = Math.random): StoicMessage {
+	const sample = random();
+	const normalized = Number.isFinite(sample) ? Math.max(0, Math.min(sample, 0.999999999)) : 0;
+	return STOIC_MESSAGES[Math.floor(normalized * STOIC_MESSAGES.length)]!;
 }
 
 export class AcidbathWelcome implements Component {
@@ -74,12 +115,12 @@ export class AcidbathWelcome implements Component {
 		const spacious = safeWidth >= 110;
 
 		if (compact) {
-			lines.push(this.color("accent", this.fit(`ACIDBATH · ${this.state.model}`, safeWidth)));
+			lines.push(this.color("accent", this.fit("ACIDBATH", safeWidth)));
 			lines.push(this.fit(`${this.statusSummary()} · ${shortPath(this.state.cwd)}`, safeWidth));
+			lines.push(this.fit(this.formatModelCard(true), safeWidth));
 		} else {
 			lines.push(this.fit(this.color("accent", `cwd ${shortPath(this.state.cwd)}`), safeWidth));
-			lines.push(this.fit(this.color("text", `model ${this.state.model}`), safeWidth));
-			lines.push(this.fit(this.color("muted", `skills ${formatSkills(this.state.skills, safeWidth)}`), safeWidth));
+			lines.push(this.fit(this.formatModelCard(false), safeWidth));
 			lines.push(this.fit(this.formatChecks(safeWidth), safeWidth));
 		}
 
@@ -87,15 +128,25 @@ export class AcidbathWelcome implements Component {
 			lines.push(this.fit(this.color("muted", `maintenance ${this.state.updateHint}`), safeWidth));
 		}
 
-		const attribution = `— ${this.state.message.author} · ${this.state.message.source}`;
-		const quote = safeWidth >= 90
-			? `${this.state.message.text} ${attribution}`
-			: this.state.message.text;
-		lines.push(this.fit(this.color("mdQuote", quote), safeWidth));
+		const quoteWidth = Math.max(12, safeWidth - 2);
+		for (const quoteLine of wrapWords(this.state.message.text, quoteWidth - 2)) {
+			lines.push(this.fit(this.emphasis(this.color("warning", `“${quoteLine}”`)), safeWidth));
+		}
+		lines.push(this.fit(this.color("warning", `— ${this.state.message.author}`), safeWidth));
 		return lines.map((line) => truncateToWidth(line, safeWidth));
 	}
 
 	public invalidate(): void {}
+
+	public dispose(): void {}
+
+	private formatModelCard(compact: boolean): string {
+		const card = this.state.modelCard;
+		const cost = formatModelCost(card.cost, compact);
+		const content = `${card.modelName} · ${cost} · thinking:${card.thinkingLevel}`;
+		return this.color(card.spendTier === "low" ? "success" : card.spendTier === "high" ? "error" : "syntaxPunctuation", `◈ ${content}`);
+	}
+
 
 	private formatChecks(width: number): string {
 		const parts = this.state.checks.map((check) => {
@@ -120,76 +171,66 @@ export class AcidbathWelcome implements Component {
 		return this.theme.fg(token as Parameters<Theme["fg"]>[0], text);
 	}
 
+	private emphasis(text: string): string {
+		return typeof this.theme.bold === "function" ? this.theme.bold(text) : text;
+	}
+
 	private fit(text: string, width: number): string {
 		const left = Math.max(0, Math.floor((width - visibleWidth(text)) / 2));
 		return `${" ".repeat(left)}${text}`;
 	}
 }
 
-export function initialWelcomeState(cwd: string, model: string, sequence: number): WelcomeState {
+export function initialWelcomeState(cwd: string, model: string, sequence: number, cost: ModelCost | null | undefined = null, thinkingLevel = "default"): WelcomeState {
+	const selectedModel = model || "no model";
 	return {
 		cwd,
-		model: model || "no model",
-		skills: [],
+		model: selectedModel,
+		modelCard: modelCardFor(selectedModel, cost, thinkingLevel),
 		checks: [
 			{ label: "runtime", status: "pending", detail: "" },
 			{ label: "model", status: "pending", detail: "" },
 			{ label: "tools", status: "pending", detail: "" },
-			{ label: "skills", status: "pending", detail: "" },
 		],
-		message: messageForSession(sequence),
+		message: randomStoicMessage(),
 		updateHint: "/acidbath-update",
 	};
 }
 
-export async function discoverSkillNames(cwd: string, agentDir = join(homedir(), ".pi", "agent")): Promise<string[]> {
-	const roots = [
-		join(agentDir, "skills"),
-		join(cwd, ".pi", "skills"),
-		join(cwd, ".agents", "skills"),
-		join(agentDir, "npm"),
-	];
-	const found = new Set<string>();
-	for (const root of roots) await collectSkillNames(root, found, 0, root === join(agentDir, "npm") ? 5 : 3);
-	return [...found].sort((a, b) => a.localeCompare(b));
+function formatModelCost(cost: ModelCost | null, compact: boolean): string {
+	if (!cost) return compact ? "cost unknown" : "cost unavailable";
+	const input = formatRate(cost.input);
+	const output = formatRate(cost.output);
+	return compact ? `in ${input}/M · out ${output}/M` : `in ${input}/1M · out ${output}/1M`;
 }
 
-async function collectSkillNames(directory: string, found: Set<string>, depth: number, maxDepth: number): Promise<void> {
-	if (depth > maxDepth) return;
-	try {
-		await access(directory);
-		const entries = await readdir(directory, { withFileTypes: true });
-		if (entries.some((entry) => entry.isFile() && entry.name.toLowerCase() === "skill.md")) {
-			found.add(directoryName(directory));
+function formatRate(value: number): string {
+	if (!Number.isFinite(value)) return "?";
+	if (value === 0) return "$0";
+	if (value < 0.01) return `$${value.toFixed(4)}`;
+	if (value < 1) return `$${value.toFixed(2)}`;
+	if (value < 10) return `$${value.toFixed(2).replace(/\.?0+$/, "")}`;
+	return `$${Math.round(value * 100) / 100}`;
+}
+
+function wrapWords(text: string, width: number): string[] {
+	const lines: string[] = [];
+	let line = "";
+	for (const word of text.split(/\s+/)) {
+		const next = line ? `${line} ${word}` : word;
+		if (line && next.length > width) {
+			lines.push(line);
+			line = word;
+		} else {
+			line = next;
 		}
-		await Promise.all(entries
-			.filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-			.map((entry) => collectSkillNames(join(directory, entry.name), found, depth + 1, maxDepth)));
-	} catch {
-		// Missing or unreadable skill roots should not prevent startup.
 	}
-}
-
-function directoryName(directory: string): string {
-	const normalized = directory.replace(/[\\/]$/, "");
-	return normalized.slice(normalized.lastIndexOf("/") + 1) || normalized;
+	if (line) lines.push(line);
+	return lines.length > 0 ? lines : [""];
 }
 
 function shortPath(path: string): string {
 	const home = homedir();
 	const display = path === home ? "~" : path.startsWith(`${home}/`) ? `~/${path.slice(home.length + 1)}` : path;
 	return display.length <= 54 ? display : `…${display.slice(-51)}`;
-}
-
-function formatSkills(skills: string[], width: number): string {
-	if (skills.length === 0) return "none detected";
-	const budget = Math.max(18, Math.min(72, Math.floor(width * 0.55)));
-	let output = "";
-	for (const skill of skills) {
-		const next = output ? `${output}, ${skill}` : skill;
-		if (next.length > budget) break;
-		output = next;
-	}
-	const remaining = skills.length - (output ? output.split(", ").length : 0);
-	return `${output || skills[0]}${remaining > 0 ? ` +${remaining}` : ""}`;
 }

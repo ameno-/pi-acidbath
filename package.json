@@ -21,7 +21,8 @@
     "access": "public"
   },
   "dependencies": {
-    "pi-research": "git+https://github.com/ameno-/pi-research.git#c678f7927dcf8edb133de8c4c345f4b69c65cefc"
+    "pi-research": "git+https://github.com/ameno-/pi-research.git#c678f7927dcf8edb133de8c4c345f4b69c65cefc",
+    "pi-web-access": "0.20.0"
   },
   "bundledDependencies": [
     "pi-research"
@@ -30,14 +31,16 @@
     "typescript": "^5.8.3"
   },
   "scripts": {
-    "test": "node --experimental-strip-types --no-warnings scripts/test-package-manifest.mjs && node --experimental-strip-types --no-warnings scripts/test-context-pyramid.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-labels.mjs && node --experimental-strip-types --no-warnings scripts/test-token-context.mjs && node --experimental-strip-types --no-warnings scripts/test-tool-motion.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-summary.mjs",
+    "test": "node --experimental-strip-types --no-warnings scripts/test-package-manifest.mjs && node --experimental-strip-types --no-warnings scripts/test-context-pyramid.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-labels.mjs && node --experimental-strip-types --no-warnings scripts/test-token-context.mjs && node --experimental-strip-types --no-warnings scripts/test-tool-motion.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-summary.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-welcome.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-whimsical.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-activity-status.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-status-transition.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-footer-activity.mjs",
     "test:visual": "node --experimental-strip-types --no-warnings tests/visual/test-tool-row-visual.mjs",
+    "bench:status": "node --experimental-strip-types --no-warnings scripts/bench-status-transitions.mjs",
     "typecheck": "tsc --noEmit"
   },
   "pi": {
     "extensions": [
       "./extensions/acidbath/index.ts",
-      "./node_modules/pi-research/extension/index.ts"
+      "./node_modules/pi-research/extension/index.ts",
+      "./node_modules/pi-web-access/index.ts"
     ],
     "themes": [
       "./themes/*.json"

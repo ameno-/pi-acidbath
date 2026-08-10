@@ -8,6 +8,7 @@ real surface without treating research notes as shipped features.
 
 - Package: `acidbath` (`package.json`)
 - Pi extension entrypoint: `extensions/acidbath/index.ts`
+- Runtime integrations: pinned `pi-research` plus explicit `pi-web-access`
 - Themes: `themes/acidbath.json`, `themes/acidbath-cyberdyne-teal.json`
 - Config examples: `config/settings.global.example.json`,
   `config/keybindings.example.json`
@@ -141,16 +142,45 @@ Files: `ui-labels.ts`, `index.ts`
 
 File: `ui-footer.ts`
 
-- Owns the single visible line for model, thinking level, cwd, completion/error
-  status, and context when context placement is `right`; active work is shown by
-  the fixed left orb slot.
-- Uses `think:default` when Pi has not emitted a thinking-level selection, rather
-  than leaving an empty field.
-- Gives context priority at narrow widths and drops secondary working metadata
-  before hiding the context meter.
-- Avoids repeating the `acidbath` product mark and repository basename.
+- Keeps the working directory, model, and current Git branch in a compact left
+  identity rail; directory is muted gray, model is red, and branch is amber.
+- Shows fixed behavior tags (`working`, `listening`, `searching`, `writing`,
+  `running`, and related states) beside centered lyrics.
+- Reserves fixed context and token fields so unknown startup data renders as an
+  empty rail plus `0 in / 0 out` rather than `?` or a shifting layout.
+- Keeps context priority at narrow widths and never lets lyric changes move
+  `ctx` or usage horizontally.
+- Thinking level remains part of the welcome model card rather than the footer.
 
-### 8. Theme surface
+### 8. Welcome, model cost, and Stoic surface
+
+Files: `ui-welcome.ts`, `index.ts`, `themes/acidbath.json`
+
+- Shows a transient welcome surface above the editor with cwd and essential
+  runtime/model/tools preflight only; skill enumeration is intentionally absent.
+- Reads native `ctx.model.cost` rates and displays only model name, input/output
+  cost per million tokens, and thinking level.
+- Derives a deliberately simple spend tier: green for low, blue for default or
+  unknown, and red for high. Unknown pricing is explicit as `cost unavailable`.
+- Maintains 24 attributed Stoic entries, selects exactly one randomly per
+  session, and renders centered yellow text plus author with no animation,
+  border, or book/source readout.
+- Updates the welcome model card when model or thinking level changes.
+
+### 9. Lifecycle timing and provenance
+
+Files: `ui-status-transition.ts`, `ui-agent-output.ts`, `scripts/bench-status-transitions.mjs`
+
+- Records real provider, reasoning, tool, session, completion, and settled
+  dwell times through `/status-timings show|reset`.
+- Uses a bounded glitch bridge for rapid lifecycle/lyric transitions and stable
+  lyrics for longer work.
+- Adds agent-output provenance entries with a local timestamp and triggering
+  prompt preview.
+- Synthetic profiles cover rapid hooks, long tools, and mixed agent loops;
+  `npm run bench:status` validates transition cost and coalescing.
+
+### 10. Theme surface
 
 Files: `themes/*.json`
 

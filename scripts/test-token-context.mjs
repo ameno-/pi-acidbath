@@ -41,8 +41,8 @@ const compacted = reduceTokenContext(state, { type: "reset", generation: "run-2"
 assert("reset clears facts", compacted.facts === null && compacted.pendingBubbles === 0);
 const unknown = reduceTokenContext(compacted, { type: "usage", facts: facts("run-2", 1) });
 assert("unknown remains unknown", formatContextFact(unknown.facts) === "ctx ?");
-assert("unknown rail is truthful", formatContextRail(unknown, 40) === "ctx ?");
-assert("unknown turn is truthful", formatTurnUsage(unknown.facts) === "turn ?");
+assert("unknown rail reserves an empty fixed view", formatContextRail(unknown, 20) === "ctx ················");
+assert("unknown turn reserves zero-width-safe fields", formatTurnUsage(unknown.facts) === "turn   0 in /   0 out");
 
 const usage = reduceTokenContext(unknown, { type: "usage", facts: facts("run-2", 2, { inputTokens: 1200, outputTokens: 340, complete: true, source: "assistant-usage" }) });
 assert("turn usage formatter", formatTurnUsage(usage.facts) === "turn 1.2k in / 340 out");

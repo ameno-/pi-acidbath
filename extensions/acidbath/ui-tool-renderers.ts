@@ -1,4 +1,4 @@
-/** Compact-first tool renderers with native Pi detail views on expansion. */
+/** Unified tool renderers with native Pi detail bodies in the transcript. */
 
 import { truncateToWidth as tuiTruncateToWidth, visibleWidth as tuiVisibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
@@ -9,7 +9,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { MotionClock, toolMotionGlyphForTool, type ToolMotionState } from "./ui-motion.js";
 import { formatToolRow } from "./ui-tool-rows.js";
-import type { ToolActivityUpdate } from "./ui-tool-activity.js";
 import type { LabelInput } from "./ui-labels.js";
 
 interface ToolRowState {
@@ -56,8 +55,6 @@ export interface CompactToolRendererOptions {
 	reducedMotion: boolean;
 	noColor: boolean;
 	onLabel?: (input: LabelInput) => void;
-	onActivity?: (update: ToolActivityUpdate) => void;
-	hideTranscript?: boolean;
 }
 
 class ToolRowComponent implements Component {
@@ -71,7 +68,6 @@ class ToolRowComponent implements Component {
 	private readonly previewHidden: number;
 	private readonly expanded: boolean;
 	private readonly hideWhenSettled: boolean;
-	private readonly hideTranscript: boolean;
 
 	constructor(
 		row: ToolRowState,
@@ -84,7 +80,6 @@ class ToolRowComponent implements Component {
 		previewHidden: number,
 		expanded: boolean,
 		hideWhenSettled = false,
-		hideTranscript = false,
 	) {
 		this.row = row;
 		this.theme = theme;
@@ -96,11 +91,9 @@ class ToolRowComponent implements Component {
 		this.previewHidden = previewHidden;
 		this.expanded = expanded;
 		this.hideWhenSettled = hideWhenSettled;
-		this.hideTranscript = hideTranscript;
 	}
 
 	render(width: number): string[] {
-		if (this.hideTranscript) return [];
 		if (this.hideWhenSettled && this.row.status !== "pending") return [];
 		const plain = formatToolRow({
 			width,
@@ -183,15 +176,15 @@ function getOrCreateRow(
 }
 
 /**
- * Build the one Acidbath presentation policy: compact lifecycle rows by
- * default, with Pi's native domain renderer retained as the expansion body.
+ * Build the one Acidbath presentation policy: one lifecycle row per call,
+ * with Pi's native domain renderer retained as the result body.
  */
 export function createCompactToolRenderers(
 	definition: AnyToolDefinition,
 	factory: (cwd: string) => AnyToolDefinition,
 	options: CompactToolRendererOptions,
 ): Pick<AnyToolDefinition, "renderCall" | "renderResult"> {
-	const { clock, reducedMotion, noColor, onLabel, onActivity, hideTranscript = false } = options;
+	const { clock, reducedMotion, noColor, onLabel } = options;
 
 	return {
 		renderCall(args: unknown, theme: Theme, context: AnyRendererContext): Component {
@@ -203,14 +196,6 @@ export function createCompactToolRenderers(
 				isError: context.isError,
 			});
 			const row = getOrCreateRow(context, definition.name, args as Record<string, unknown>);
-			onActivity?.({
-				event: "start",
-				toolCallId: context.toolCallId,
-				toolName: definition.name,
-				target: row.target,
-				status: "pending",
-				metadata: ["running"],
-			});
 			// A call slot remains pending until its result slot settles. Once
 			// settled, do not reinstall its invalidation callback during redraw.
 			if (!row.settled) {
@@ -220,7 +205,7 @@ export function createCompactToolRenderers(
 				if (row.status === "pending") clock.subscribe(context.toolCallId, context.invalidate);
 				else clock.unsubscribe(context.toolCallId);
 			}
-			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, undefined, [], 0, false, true, hideTranscript);
+			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, undefined, [], 0, false, true);
 		},
 
 		renderResult(
@@ -250,16 +235,6 @@ export function createCompactToolRenderers(
 			const preview = previewForResult(definition.name, result);
 			row.previewLines = preview.lines;
 			row.previewHidden = preview.hidden;
-			onActivity?.({
-				event: "update",
-				toolCallId: context.toolCallId,
-				toolName: definition.name,
-				target: row.target,
-				status: row.status,
-				metadata: row.metadata,
-				previewLines: row.previewLines,
-				previewHidden: row.previewHidden,
-			});
 			if (row.status === "pending") {
 				clock.subscribe(context.toolCallId, context.invalidate);
 			} else {
@@ -286,7 +261,7 @@ export function createCompactToolRenderers(
 					row.nativeDetails = undefined;
 				}
 			}
-			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, row.nativeDetails, row.previewLines, row.previewHidden, resultOptions.expanded, false, hideTranscript);
+			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, row.nativeDetails, row.previewLines, row.previewHidden, resultOptions.expanded);
 		},
 	};
 }
