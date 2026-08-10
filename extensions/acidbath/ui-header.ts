@@ -30,7 +30,6 @@ export interface Rgb {
 
 export interface AcidbathHeaderState {
 	summary: string;
-	contextPercent?: number;
 }
 
 /** Extract a usable RGB value from the ANSI color emitted by a Pi theme. */
@@ -84,7 +83,6 @@ export function renderHeaderLines(
 	theme: Theme,
 	noColor = false,
 	summary = DEFAULT_SESSION_SUMMARY,
-	contextPercent?: number,
 ): string[] {
 	const lineWidth = Math.max(1, Math.trunc(width));
 	const base = parseForegroundRgbFromAnsi(theme.getFgAnsi("accent")) ?? FALLBACK_BASE_RGB;
@@ -94,8 +92,7 @@ export function renderHeaderLines(
 		return fitLineToWidth(painted, lineWidth);
 	});
 	const tagline = noColor ? HEADER_TAGLINE : theme.fg("muted", HEADER_TAGLINE);
-	const context = contextPercent === undefined ? "" : ` · ctx ${Math.round(Math.max(0, Math.min(1, contextPercent)) * 100)}%`;
-	const status = noColor ? `${summary}${context}` : theme.fg("text", `${summary}${context}`);
+	const status = noColor ? summary : theme.fg("text", summary);
 	return ["", ...wordmark, "", fitLineToWidth(tagline, lineWidth), fitLineToWidth(status, lineWidth), ""];
 }
 
@@ -185,7 +182,7 @@ export class AcidbathHeader implements Component {
 	}
 
 	public render(width: number): string[] {
-		return renderHeaderLines(width, this.theme, this.noColor, this.state.summary, this.state.contextPercent);
+		return renderHeaderLines(width, this.theme, this.noColor, this.state.summary);
 	}
 
 	public invalidate(): void {

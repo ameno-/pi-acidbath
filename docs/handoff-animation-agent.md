@@ -1,5 +1,9 @@
 # Handoff prompt: Acidbath terminal animation exploration
 
+> **Archived.** The legacy orb, motion, and context animation surfaces were
+> removed from Acidbath core. Keep this document only as historical design
+> context; do not restore those surfaces without a new product review.
+
 You are a visual/TUI animation specialist working in `/Users/ameno/dev/acidbath`.
 Your task is to explore and prototype an original terminal animation for the
 Acidbath header. Do not make production UI changes until the parent agent has

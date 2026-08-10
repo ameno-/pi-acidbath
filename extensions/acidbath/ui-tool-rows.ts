@@ -7,8 +7,6 @@ export interface ToolRowFormatInput {
 	toolName: string;
 	target: string;
 	status: ToolRowStatus;
-	phase?: number;
-	reducedMotion?: boolean;
 	metadata?: readonly string[];
 	expandable?: boolean;
 	expanded?: boolean;
@@ -32,11 +30,6 @@ export function formatToolRow(input: ToolRowFormatInput): string {
 	const metadata = [...(input.metadata ?? [])].map(clean).filter(Boolean);
 	if (input.expandable && !input.expanded) metadata.push("expand");
 	return truncate(metadata.length === 0 ? required : `${required} (${metadata.join(", ")})`, width);
-}
-
-function normalize(value: number): number {
-	if (!Number.isFinite(value)) return 0;
-	return ((Math.trunc(value) % 4) + 4) % 4;
 }
 
 function clean(value: string): string {

@@ -1,6 +1,9 @@
 # Acidbath next UI pass: layout and tool-call research
 
-**Status: research completed; layout recommendations partially implemented.** The right-side footer consolidation and default-on context direction are now wired. Tool-call row compaction remains research-only pending review.
+**Status: historical research.** The current layout keeps a static right-side
+footer context rail and one transient activity rail. Context placement controls,
+footer lyrics, and tool-row animation described below are no longer part of the
+core runtime.
 
 ## Executive recommendation
 

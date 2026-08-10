@@ -2,8 +2,7 @@
 
 export type TokenLifecycle = "idle" | "working" | "done" | "settled" | "error";
 export type FactSource = "context-api" | "assistant-usage" | "unknown";
-export type RailSegment = "filled" | "empty" | "bubble";
-export type BubbleDirection = "in" | "out";
+export type RailSegment = "filled" | "empty";
 
 export interface UsageFacts {
 	contextTokens: number | null;
@@ -34,11 +33,7 @@ export interface TokenContextState {
 	facts: UsageFacts | null;
 	contextDelta: number | null;
 	segments: readonly RailSegment[];
-	pendingBubbles: number;
-	bubbleDirection: BubbleDirection | null;
-	frameIndex: number;
 	generation: string;
-	motionReduced: boolean;
 }
 
 export interface TokenContextRender {
@@ -50,8 +45,6 @@ export interface TokenContextRender {
 }
 
 const RAIL_SLOTS = 16;
-const BUBBLE_LIMIT = 3;
-
 export function unknownUsageFacts(generation = "initial", sequence = 0): UsageFacts {
 	return {
 		contextTokens: null,
@@ -70,17 +63,13 @@ export function unknownUsageFacts(generation = "initial", sequence = 0): UsageFa
 	};
 }
 
-export function createTokenContextState(options: { generation?: string; reducedMotion?: boolean } = {}): TokenContextState {
+export function createTokenContextState(options: { generation?: string } = {}): TokenContextState {
 	return {
 		lifecycle: "idle",
 		facts: null,
 		contextDelta: null,
 		segments: emptySegments(RAIL_SLOTS),
-		pendingBubbles: 0,
-		bubbleDirection: null,
-		frameIndex: 0,
 		generation: options.generation ?? "initial",
-		motionReduced: options.reducedMotion ?? false,
 	};
 }
 
@@ -109,9 +98,6 @@ export function reduceTokenContext(state: TokenContextState, event: TokenContext
 				lifecycle: "working",
 				generation: event.generation,
 				contextDelta: null,
-				pendingBubbles: 0,
-				bubbleDirection: null,
-				frameIndex: 0,
 			};
 		case "reset":
 			return {
@@ -121,9 +107,6 @@ export function reduceTokenContext(state: TokenContextState, event: TokenContext
 				facts: null,
 				contextDelta: null,
 				segments: emptySegments(RAIL_SLOTS),
-				pendingBubbles: 0,
-				bubbleDirection: null,
-				frameIndex: 0,
 			};
 		case "usage": {
 			const facts = normalizeUsageFacts(event.facts);
@@ -134,41 +117,24 @@ export function reduceTokenContext(state: TokenContextState, event: TokenContext
 			const delta = previous && previous.generation === facts.generation && previous.contextTokens !== null && facts.contextTokens !== null
 				? facts.contextTokens - previous.contextTokens
 				: null;
-			const direction = delta === null || delta === 0 ? null : delta > 0 ? "in" : "out";
-			const pendingBubbles = state.motionReduced || delta === null || delta === 0
-				? 0
-				: Math.min(BUBBLE_LIMIT, Math.max(1, Math.floor(Math.abs(delta) / 1000)));
 			return {
 				...state,
 				facts,
 				contextDelta: delta,
 				segments: segmentsForPercent(facts.contextPercent),
-				pendingBubbles,
-				bubbleDirection: pendingBubbles > 0 ? direction : null,
-				frameIndex: 0,
 			};
 		}
 		case "frame_tick":
-			if (state.pendingBubbles <= 0) return state;
-			return {
-				...state,
-				pendingBubbles: state.pendingBubbles - 1,
-				bubbleDirection: state.pendingBubbles <= 1 ? null : state.bubbleDirection,
-				frameIndex: state.frameIndex + 1,
-			};
+			return state;
 		case "agent_end":
 			return {
 				...state,
 				lifecycle: event.outcome === "success" ? "done" : "error",
-				pendingBubbles: 0,
-				bubbleDirection: null,
 			};
 		case "agent_settled":
 			return {
 				...state,
 				lifecycle: state.lifecycle === "done" ? "settled" : state.lifecycle,
-				pendingBubbles: 0,
-				bubbleDirection: null,
 			};
 	}
 }
@@ -193,40 +159,32 @@ export function formatTurnUsage(facts: UsageFacts | null): string {
 }
 
 /** The default footer deliberately shows pressure as a light rail, not a second percentage fact. */
-export function formatContextRail(state: TokenContextState, width: number, reducedMotion = state.motionReduced): string {
+export function formatContextRail(state: TokenContextState, width: number): string {
 	const facts = state.facts;
 	const label = "ctx ";
 	// Unknown pressure is still a complete rail: empty cells communicate no data
 	// without introducing a question mark or changing the dock width.
 	const slots = Math.max(1, width - visibleWidth(label));
-	const cells = railCells(state, slots, reducedMotion);
+	const cells = railCells(state, slots);
 	return truncateToWidth(`${label}${cells}`, width);
 }
 
 export function renderTokenContext(
 	state: TokenContextState,
 	width: number,
-	opts: { reducedMotion?: boolean; noColor?: boolean } = {},
+	_opts: { noColor?: boolean } = {},
 ): TokenContextRender {
-	const reducedMotion = opts.reducedMotion ?? state.motionReduced;
 	const context = formatContextFact(state.facts);
 	const turn = formatTurnUsage(state.facts);
-	const rail = formatContextRail(state, Math.max(1, width), reducedMotion);
+	const rail = formatContextRail(state, Math.max(1, width));
 	const line = truncateToWidth(`${rail} · ${turn}`, Math.max(1, width));
 	return { line, context, turn, rail, visibleWidth: visibleWidth(line) };
 }
 
-function railCells(state: TokenContextState, slots: number, reducedMotion: boolean): string {
+function railCells(state: TokenContextState, slots: number): string {
 	const percent = state.facts?.contextPercent ?? 0;
 	const filled = Math.round(Math.max(0, Math.min(1, percent)) * slots);
-	const cells: string[] = Array.from({ length: slots }, (_, index) => index < filled ? "●" : "·");
-	if (!reducedMotion && state.pendingBubbles > 0 && state.bubbleDirection) {
-		const position = state.bubbleDirection === "in"
-			? Math.min(slots - 1, filled + (state.frameIndex % Math.max(1, slots - filled)))
-			: Math.max(0, filled - 1 - (state.frameIndex % Math.max(1, filled)));
-		cells[position] = "○";
-	}
-	return cells.join("");
+	return Array.from({ length: slots }, (_, index) => index < filled ? "●" : "·").join("");
 }
 
 function segmentsForPercent(percent: number | null): readonly RailSegment[] {

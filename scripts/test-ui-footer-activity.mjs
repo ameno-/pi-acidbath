@@ -6,13 +6,9 @@ let passed = 0;
 let failed = 0;
 function assert(name, condition, detail = "") {
 	if (condition) passed += 1;
-	else {
-		failed += 1;
-		console.error(`FAIL ${name}${detail ? ` (${detail})` : ""}`);
-	}
+	else { failed += 1; console.error(`FAIL ${name}${detail ? ` (${detail})` : ""}`); }
 }
 
-process.env.PI_ACIDBATH_REDUCED_MOTION = "1";
 const tui = { requestRender() {} };
 const theme = {
 	fg(_color, text) { return text; },
@@ -21,23 +17,14 @@ const theme = {
 };
 
 const footer = new AcidbathFooter(tui, theme, "/tmp/project", true);
-footer.update({ modelName: "model", branchName: "feature/footer", thinkingLevel: "high", contextVisible: true, contextPercent: 0.5, activityText: "Short lyric" });
-const shortLine = footer.render(120)[0];
-footer.update({ activityText: "A substantially longer lyric that must be clipped to the same fixed slot width" });
-const longLine = footer.render(120)[0];
-assert("footer remains width-safe", visibleWidth(shortLine) <= 120 && visibleWidth(longLine) <= 120);
-assert("context position is fixed across lyric lengths", shortLine.indexOf("ctx ") === longLine.indexOf("ctx "));
-assert("unknown context has no question mark", !shortLine.includes("ctx ?"));
-assert("footer shows the current branch", shortLine.includes("feature/footer"));
-assert("footer always reserves token fields", shortLine.includes("0 in /") && shortLine.includes("0 out"));
-assert("short lyric is visible", shortLine.includes("♪ Short lyric"));
-assert("overlong lyric is rejected instead of chopped", longLine.includes("♪ …") && !longLine.includes("same fixed slot width"));
-assert("lyric is centered within its fixed slot", Math.abs(shortLine.indexOf("♪ Short lyric") - longLine.indexOf("♪ …")) <= 20);
-footer.update({ activityText: "Short lyric" });
-const detailedDock = footer.render(80)[0];
-assert("footer keeps activity on the right", detailedDock.includes("♪") && detailedDock.includes("ctx "));
-const narrowDock = footer.render(60)[0];
-assert("narrow dock keeps complete lyric and ctx", narrowDock.includes("♪ Short lyric") && narrowDock.includes("ctx "));
+footer.update({ modelName: "model", branchName: "feature/footer", contextVisible: true, contextPercent: 0.5 });
+const wide = footer.render(120)[0];
+const narrow = footer.render(60)[0];
+assert("footer remains width-safe", visibleWidth(wide) <= 120 && visibleWidth(narrow) <= 60);
+assert("footer shows the current branch", wide.includes("feature/footer"));
+assert("footer reserves context and token fields", wide.includes("ctx ") && wide.includes("0 in /") && wide.includes("0 out"));
+assert("footer has no legacy lyric rail", !wide.includes("♪"));
+assert("footer remains useful when narrow", narrow.includes("ctx ") || narrow.includes("acidbath"));
 footer.dispose();
 
 assert("prompt preview is one line", normalizePromptPreview(" test\n prompt\tvalue ") === "test prompt value");

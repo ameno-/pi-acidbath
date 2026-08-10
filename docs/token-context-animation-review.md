@@ -1,7 +1,8 @@
 # Token/context animation review
 
-Status: **implemented baseline; production wiring now uses the pure reducer and
-shared motion clock**.
+Status: **historical review**. Token/context facts remain active, but the
+animated bubble and shared motion-clock wiring were removed. The current footer
+uses a static context rail.
 
 Implementation note: the default footer renders a light `ctx` rail without a
 numeric percentage. Percentage/token facts remain internal inputs and are

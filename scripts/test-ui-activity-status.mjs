@@ -43,9 +43,9 @@ widget.update({ visible: true, reasoningActive: true, reasoningPreview: "latest 
 const reasoningRow = widget.render(80).join("\n");
 assert("renders reasoning in the shared activity rail", reasoningRow.startsWith("◇ reasoning  latest thought"));
 assert("truncates reasoning row to width", visibleWidth(widget.render(12)[0]) <= 12);
-widget.update({ workingState: "listening", reasoningActive: false, message: "Listening…" });
+widget.update({ kind: "listening", reasoningActive: false, message: "Listening…" });
 assert("renders listening in the shared activity rail", widget.render(80)[0] === "◇ listening  Listening…");
-widget.update({ workingState: "shaping", message: "Editing auth.ts" });
+widget.update({ kind: "editing", message: "Editing auth.ts" });
 assert("renders tool status in the shared activity rail", widget.render(80)[0] === "◇ editing  Editing auth.ts");
 widget.update({ message: "settled" });
 assert("hides settled status without reserving a row", widget.render(80).length === 0);

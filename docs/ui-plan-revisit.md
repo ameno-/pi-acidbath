@@ -1,8 +1,9 @@
 # Acidbath UI plan revisit
 
-Status: **active implementation plus visual review**. The borderless editor,
-Acidbath header, consolidated footer, and optional context placements are now
-production surfaces; tool-call compaction and animation remain under review.
+Status: **historical review**. The borderless editor, Acidbath header,
+consolidated footer, and one transient activity rail are current. The orb,
+context placements, footer lyrics, and tool-row animation were removed from the
+core runtime and archived.
 
 ## Current UI contract
 

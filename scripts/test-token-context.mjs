@@ -28,17 +28,14 @@ for (const width of [40, 60, 80, 120]) {
   assert(`rail width ${width}`, Array.from(rail).length <= width, rail);
 }
 state = reduceTokenContext(state, { type: "usage", facts: facts("run-1", 2, { contextTokens: 84500, contextWindow: 200000, contextPercent: 0.4225 }) });
-assert("increase queues bounded bubbles", state.pendingBubbles >= 1 && state.pendingBubbles <= 3);
-const moving = formatContextRail(state, 80);
-assert("increase shows bubble", moving.includes("○"));
-state = reduceTokenContext(state, { type: "frame_tick" });
+assert("context updates remain static", !formatContextRail(state, 80).includes("○"));
 state = reduceTokenContext(state, { type: "agent_end", outcome: "success" });
-assert("agent end is done", state.lifecycle === "done" && state.pendingBubbles === 0);
+assert("agent end is done", state.lifecycle === "done");
 state = reduceTokenContext(state, { type: "agent_settled" });
 assert("agent settled is terminal", state.lifecycle === "settled");
 
 const compacted = reduceTokenContext(state, { type: "reset", generation: "run-2" });
-assert("reset clears facts", compacted.facts === null && compacted.pendingBubbles === 0);
+assert("reset clears facts", compacted.facts === null);
 const unknown = reduceTokenContext(compacted, { type: "usage", facts: facts("run-2", 1) });
 assert("unknown remains unknown", formatContextFact(unknown.facts) === "ctx ?");
 assert("unknown rail reserves an empty fixed view", formatContextRail(unknown, 20) === "ctx ················");

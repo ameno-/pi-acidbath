@@ -1,9 +1,8 @@
 # Context pyramid specification
 
-Status: **prototype plus optional implementation**. The editor border is now
-removed; context defaults to a right-side consolidated footer meter and the
-pyramid can be placed `above` or `below` the editor with `/context` or
-`PI_ACIDBATH_CONTEXT`.
+Status: **archived prototype**. The context pyramid and placement controls
+were removed from the core runtime. The current context surface is the static
+right-aligned footer rail.
 
 ## Shape
 

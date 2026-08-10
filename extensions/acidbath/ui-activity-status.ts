@@ -1,14 +1,7 @@
-/**
- * One persistent two-lane activity surface.
- *
- * The left lane is exclusively reserved for the shimmering reasoning preview.
- * Lyrics and every other lifecycle state share a right-aligned lane whose
- * words transition through a restrained, deterministic glitch bridge.
- */
+/** One transient activity rail above the editor. */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
-import type { OrbState } from "./ui-orb.ts";
 
 export const ACTIVITY_STATUS_WIDGET_KEY = "acidbath-activity-status";
 
@@ -19,35 +12,26 @@ const GLOW_PHASES = ["dim", "muted", "accent", "bold", "accent", "muted"] as con
 
 export interface ActivityStatusUpdate {
 	visible?: boolean;
-	workingState?: OrbState;
+	kind?: string;
 	message?: string;
-	lyric?: string;
-	contentMode?: "status" | "lyric";
 	reasoningActive?: boolean;
 	reasoningPreview?: string;
-	statusActive?: boolean;
 }
 
 interface ActivityStatusState {
 	visible: boolean;
-	workingState: OrbState;
+	kind: string;
 	message: string;
-	lyric: string;
-	contentMode: "status" | "lyric";
 	reasoningActive: boolean;
 	reasoningPreview: string;
-	statusActive: boolean;
 }
 
 const INITIAL_STATE: ActivityStatusState = {
 	visible: true,
-	workingState: "working",
+	kind: "working",
 	message: "settled",
-	lyric: "",
-	contentMode: "status",
 	reasoningActive: false,
 	reasoningPreview: "",
-	statusActive: false,
 };
 
 /** Return the latest provider-supplied thinking block from an assistant message. */
@@ -59,9 +43,7 @@ export function thinkingTextFromMessage(message: unknown): string | undefined {
 		const part = value.content[index];
 		if (!part || typeof part !== "object") continue;
 		const block = part as Record<string, unknown>;
-		if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim()) {
-			return block.thinking;
-		}
+		if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim()) return block.thinking;
 	}
 	return undefined;
 }
@@ -69,11 +51,7 @@ export function thinkingTextFromMessage(message: unknown): string | undefined {
 /** Build a terminal-safe, one-line tail preview without mutating source content. */
 export function thinkingPreview(text: string | undefined, maxChars = MAX_PREVIEW_CHARS): string {
 	if (!text || maxChars <= 0) return "";
-	const normalized = text
-		.replace(CONTROL_OR_ANSI, "")
-		.replace(/[\r\n\t]+/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
+	const normalized = text.replace(CONTROL_OR_ANSI, "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
 	if (normalized.length <= maxChars) return normalized;
 	if (maxChars === 1) return "…";
 	let tail = normalized.slice(-(maxChars - 1));
@@ -107,46 +85,30 @@ export class AcidbathActivityStatus implements Component {
 	}
 
 	render(width: number): string[] {
-		const statusActive = this.state.statusActive || this.hasActiveMessage();
-		if (!this.state.visible || (!this.state.reasoningActive && !statusActive) || width <= 0) return [];
-		const safeWidth = Math.max(1, Math.trunc(width));
-		const label = this.activityLabel();
+		const active = this.state.reasoningActive || this.hasActiveMessage();
+		if (!this.state.visible || !active || width <= 0) return [];
 		const detail = this.state.reasoningActive ? this.state.reasoningPreview || "…" : this.state.message || "…";
-		return [truncateToWidth(`◇ ${this.glowingLabel(label)}  ${this.muted(detail)}`, safeWidth)];
+		return [truncateToWidth(`◇ ${this.glowingLabel(this.state.reasoningActive ? "reasoning" : this.state.kind)}  ${this.muted(detail)}`, Math.max(1, Math.trunc(width)))];
 	}
 
-	invalidate(): void {
-		// Theme functions are evaluated at render time; there is no baked cache.
-	}
+	invalidate(): void {}
 
 	dispose(): void {
-		if (this.timer !== undefined) clearInterval(this.timer);
-		this.timer = undefined;
-	}
-
-	private activityLabel(): string {
-		if (this.state.reasoningActive) return "reasoning";
-		switch (this.state.workingState) {
-			case "listening": return "listening";
-			case "searching": return "searching";
-			case "shaping": return "editing";
-			case "composing": return "composing";
-			default: return "working";
-		}
-	}
-
-	private statusColor(): "accent" | "warning" | "success" {
-		if (this.state.workingState === "listening" || this.state.workingState === "searching") return "accent";
-		if (this.state.workingState === "composing") return "success";
-		return "warning";
+	if (this.timer !== undefined) clearInterval(this.timer);
+	this.timer = undefined;
 	}
 
 	private glowingLabel(text: string): string {
 		if (this.noColor || this.reducedMotion) return text;
 		const phase = GLOW_PHASES[this.glowPhase % GLOW_PHASES.length]!;
 		const color = phase === "accent" || phase === "bold" ? this.statusColor() : phase;
-		if (phase === "bold") return this.theme.bold(this.theme.fg(color, text));
-		return this.theme.fg(color, text);
+		return phase === "bold" ? this.theme.bold(this.theme.fg(color, text)) : this.theme.fg(color, text);
+	}
+
+	private statusColor(): "accent" | "warning" | "success" {
+		if (this.state.kind === "listening" || this.state.kind === "searching") return "accent";
+		if (this.state.kind === "composing") return "success";
+		return "warning";
 	}
 
 	private muted(text: string): string {
@@ -154,12 +116,11 @@ export class AcidbathActivityStatus implements Component {
 	}
 
 	private hasActiveMessage(): boolean {
-		const message = this.state.message.trim().toLowerCase();
-		return message.length > 0 && !["settled", "done", "turn complete", "context compacted"].includes(message);
+		return !["", "settled", "done", "turn complete", "context compacted"].includes(this.state.message.trim().toLowerCase());
 	}
 
 	private syncTimer(): void {
-		const shouldRun = this.state.visible && !this.reducedMotion && (this.state.reasoningActive || this.state.statusActive || this.hasActiveMessage());
+		const shouldRun = this.state.visible && !this.reducedMotion && (this.state.reasoningActive || this.hasActiveMessage());
 		if (shouldRun && this.timer === undefined) {
 			this.timer = setInterval(() => {
 				this.glowPhase = (this.glowPhase + 1) % GLOW_PHASES.length;
@@ -175,11 +136,8 @@ export class AcidbathActivityStatus implements Component {
 
 function sameState(left: ActivityStatusState, right: ActivityStatusState): boolean {
 	return left.visible === right.visible
-		&& left.workingState === right.workingState
+		&& left.kind === right.kind
 		&& left.message === right.message
-		&& left.lyric === right.lyric
-		&& left.contentMode === right.contentMode
 		&& left.reasoningActive === right.reasoningActive
-		&& left.reasoningPreview === right.reasoningPreview
-		&& left.statusActive === right.statusActive;
+		&& left.reasoningPreview === right.reasoningPreview;
 }

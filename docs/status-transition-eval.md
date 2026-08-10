@@ -1,5 +1,8 @@
 # Footer lyric transition timing eval
 
+> **Archived experiment.** Footer lyrics and lyric-transition animation were
+> removed from Acidbath core. The source is preserved in `/Users/ameno/dev/lib/archive/acidbath-ui/`.
+
 ## Goal
 
 Keep one lyric continuously visible in the footer beside the context rail. Every

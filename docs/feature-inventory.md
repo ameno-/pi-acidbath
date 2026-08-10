@@ -1,8 +1,8 @@
 # Acidbath feature inventory and implementation details
 
-This is the current product contract for the Acidbath Pi extension. It separates
-implemented behavior from planned capability so a fresh session can review the
-real surface without treating research notes as shipped features.
+> **Historical inventory.** The orb, context-pyramid, footer-lyric, and tool-motion
+> surfaces listed below have been archived. The current runtime is documented in
+> `README.md` and `docs/COHESIVE-IMPLEMENTATION-PLAN.md`.
 
 ## Package and ownership
 

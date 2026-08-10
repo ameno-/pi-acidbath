@@ -7,7 +7,7 @@ import type {
 	ToolDefinition,
 	ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-import { MotionClock, toolMotionGlyphForTool, type ToolMotionState } from "./ui-motion.js";
+type ToolMotionState = "pending" | "success" | "error";
 import { formatToolRow } from "./ui-tool-rows.js";
 import type { LabelInput } from "./ui-labels.js";
 
@@ -18,8 +18,6 @@ interface ToolRowState {
 	status: ToolMotionState;
 	target: string;
 	metadata: string[];
-	startedAt: number;
-	durationMs?: number;
 	truncated: boolean;
 	settled: boolean;
 	callInvalidate?: () => void;
@@ -51,8 +49,6 @@ type AnyResultOptions = ToolRenderResultOptions;
 
 /** Presentation contract for one tool. Execution stays in ui-tools.ts. */
 export interface CompactToolRendererOptions {
-	clock: MotionClock;
-	reducedMotion: boolean;
 	noColor: boolean;
 	onLabel?: (input: LabelInput) => void;
 }
@@ -60,8 +56,6 @@ export interface CompactToolRendererOptions {
 class ToolRowComponent implements Component {
 	private readonly row: ToolRowState;
 	private readonly theme: Theme;
-	private readonly clock: MotionClock;
-	private readonly reducedMotion: boolean;
 	private readonly noColor: boolean;
 	private readonly details: Component | undefined;
 	private readonly previewLines: string[];
@@ -72,8 +66,6 @@ class ToolRowComponent implements Component {
 	constructor(
 		row: ToolRowState,
 		theme: Theme,
-		clock: MotionClock,
-		reducedMotion: boolean,
 		noColor: boolean,
 		details: Component | undefined,
 		previewLines: readonly string[],
@@ -83,8 +75,6 @@ class ToolRowComponent implements Component {
 	) {
 		this.row = row;
 		this.theme = theme;
-		this.clock = clock;
-		this.reducedMotion = reducedMotion;
 		this.noColor = noColor;
 		this.details = details;
 		this.previewLines = [...previewLines];
@@ -100,26 +90,19 @@ class ToolRowComponent implements Component {
 			toolName: this.row.toolName,
 			target: this.row.target,
 			status: this.row.status,
-			phase: this.clock.currentPhase(),
-			reducedMotion: this.reducedMotion,
 			metadata: this.row.metadata,
 			expandable: this.row.status !== "pending" || Boolean(this.details) || this.row.truncated,
 			expanded: this.expanded,
 		});
 		const lifecycleColor = this.row.status === "error" ? "error" : this.row.status === "success" ? "success" : "accent";
 		const styled = this.noColor ? plain : styleToolRow(plain, this.row.toolName, lifecycleColor, this.theme);
-		// Keep lifecycle animation in a dedicated four-cell rail. The glyph and
-		// tool name carry the state; no filled row or border is needed.
-		const glyph = toolMotionGlyphForTool(this.row.toolName, this.row.status, this.clock.currentPhase(), this.reducedMotion);
-		const rail = fixedActivityRail(glyph, this.row.status, this.theme, this.noColor);
 		// Native tool renderers can emit OSC-8 hyperlinks and other terminal
 		// sequences. Use Pi's width helpers here; the local gauge helpers are
 		// intentionally smaller and do not understand every sequence Pi emits.
-		const lines = [tuiTruncateToWidth(`${rail}${styled}`, width, "…")];
+		const lines = [tuiTruncateToWidth(styled, width, "…")];
 		const indent = " ".repeat(4);
 		if (!this.expanded && this.previewLines.length > 0) {
 			const previewColor = this.row.status === "error" ? "error" : "toolOutput";
-			const previewRows = this.previewLines.length + (this.previewHidden > 0 ? 1 : 0);
 			for (const previewLine of this.previewLines) {
 				const preview = `${this.theme.fg("dim", "  ")}${this.theme.fg(previewColor, previewLine)}`;
 				lines.push(tuiTruncateToWidth(`${indent}${preview}`, width, "…"));
@@ -165,7 +148,6 @@ function getOrCreateRow(
 		status: "pending",
 		target: targetForTool(toolName, args),
 		metadata: ["pending"],
-		startedAt: Date.now(),
 		truncated: false,
 		settled: false,
 		previewLines: [],
@@ -184,7 +166,7 @@ export function createCompactToolRenderers(
 	factory: (cwd: string) => AnyToolDefinition,
 	options: CompactToolRendererOptions,
 ): Pick<AnyToolDefinition, "renderCall" | "renderResult"> {
-	const { clock, reducedMotion, noColor, onLabel } = options;
+	const { noColor, onLabel } = options;
 
 	return {
 		renderCall(args: unknown, theme: Theme, context: AnyRendererContext): Component {
@@ -202,10 +184,8 @@ export function createCompactToolRenderers(
 				row.status = context.isError ? "error" : "pending";
 				row.target = targetForTool(definition.name, row.args);
 				row.callInvalidate = context.invalidate;
-				if (row.status === "pending") clock.subscribe(context.toolCallId, context.invalidate);
-				else clock.unsubscribe(context.toolCallId);
 			}
-			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, undefined, [], 0, false, true);
+			return new ToolRowComponent(row, theme, noColor, undefined, [], 0, false, true);
 		},
 
 		renderResult(
@@ -225,20 +205,14 @@ export function createCompactToolRenderers(
 			row.status = context.isError ? "error" : resultOptions.isPartial ? "pending" : "success";
 			row.settled = !resultOptions.isPartial;
 			row.target = targetForTool(definition.name, row.args);
-			if (!resultOptions.isPartial && row.durationMs === undefined) {
-				row.durationMs = Math.max(0, Date.now() - row.startedAt);
-			}
 			row.metadata = resultOptions.isPartial
 				? ["running"]
-				: metadataForTool(definition.name, row.args, result as Record<string, unknown>, row.durationMs);
+				: metadataForTool(definition.name, row.args, result as Record<string, unknown>);
 			row.truncated = hasTruncation(result as Record<string, unknown>);
 			const preview = previewForResult(definition.name, result);
 			row.previewLines = preview.lines;
 			row.previewHidden = preview.hidden;
-			if (row.status === "pending") {
-				clock.subscribe(context.toolCallId, context.invalidate);
-			} else {
-				clock.unsubscribe(context.toolCallId);
+			if (row.status !== "pending") {
 				const invalidateCall = row.callInvalidate;
 				row.callInvalidate = undefined;
 				if (invalidateCall) queueMicrotask(invalidateCall);
@@ -261,7 +235,7 @@ export function createCompactToolRenderers(
 					row.nativeDetails = undefined;
 				}
 			}
-			return new ToolRowComponent(row, theme, clock, reducedMotion, noColor, row.nativeDetails, row.previewLines, row.previewHidden, resultOptions.expanded);
+			return new ToolRowComponent(row, theme, noColor, row.nativeDetails, row.previewLines, row.previewHidden, resultOptions.expanded);
 		},
 	};
 }
@@ -296,7 +270,7 @@ function targetForTool(toolName: string, args: Record<string, unknown>): string 
 	return cleanInline(typeof value === "string" ? value : "");
 }
 
-function metadataForTool(toolName: string, args: Record<string, unknown>, result: Record<string, unknown>, durationMs: number | undefined): string[] {
+function metadataForTool(toolName: string, args: Record<string, unknown>, result: Record<string, unknown>): string[] {
 	const details = isRecord(result.details) ? result.details : {};
 	const metadata: string[] = [];
 	const exitCode = numberValue(details.exitCode ?? result.exitCode);
@@ -306,7 +280,6 @@ function metadataForTool(toolName: string, args: Record<string, unknown>, result
 	const added = numberValue(details.added ?? details.addedLines);
 	const removed = numberValue(details.removed ?? details.removedLines);
 	if (added !== undefined || removed !== undefined) metadata.push(`+${Math.round(added ?? 0)} -${Math.round(removed ?? 0)}`);
-	if (durationMs !== undefined && durationMs > 0) metadata.push(formatDuration(durationMs));
 	if (hasTruncation(result)) metadata.push("truncated");
 	if (metadata.length === 0 && toolName === "bash" && typeof args.command === "string") metadata.push("completed");
 	return metadata;
@@ -316,10 +289,6 @@ function hasTruncation(result: Record<string, unknown>): boolean {
 	const details = isRecord(result.details) ? result.details : result;
 	const truncation = isRecord(details.truncation) ? details.truncation : undefined;
 	return details.truncated === true || truncation?.truncated === true || truncation?.truncatedByBytes === true || truncation?.truncatedByLines === true;
-}
-
-function formatDuration(durationMs: number): string {
-	return durationMs < 1000 ? `${Math.round(durationMs)}ms` : `${(durationMs / 1000).toFixed(1).replace(/\.0$/, "")}s`;
 }
 
 function numberValue(value: unknown): number | undefined {
@@ -336,13 +305,6 @@ function styleToolRow(plain: string, toolName: string, color: "accent" | "succes
 	const toolWidth = tuiVisibleWidth(toolName);
 	const toolEnd = Math.min(plain.length, toolStart + toolWidth);
 	return `${theme.fg(color, plain.slice(0, statusWidth))}${plain.slice(statusWidth, toolStart)}${theme.fg(color, plain.slice(toolStart, toolEnd))}${plain.slice(toolEnd)}`;
-}
-
-function fixedActivityRail(glyph: string, status: ToolMotionState, theme: Theme, noColor: boolean): string {
-	const safeGlyph = tuiTruncateToWidth(glyph, 4);
-	const padded = `${safeGlyph}${" ".repeat(Math.max(0, 4 - tuiVisibleWidth(safeGlyph)))}`;
-	if (noColor) return padded;
-	return theme.fg(status === "error" ? "error" : status === "success" ? "success" : "accent", padded);
 }
 
 function cleanInline(value: string): string {

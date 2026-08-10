@@ -1,7 +1,7 @@
 /**
  * Acidbath — V1 deterministic label synthesis (PURE, UNCONNECTED).
  *
- * Status: **wired through the live apply() path**. The export remains a
+ * Status: **wired through the live lifecycle path**. The export remains a
  * pure function with no runtime dependencies; the caller owns the 100ms
  * trailing debounce and churn guard. There are no timers, Pi context reads,
  * theme calls, or logging inside this module. The function is deterministic
@@ -10,12 +10,9 @@
  * Spec: docs/PLAN.md §4 (V1 deterministic / V2 adaptive).
  *
  * Wire-in contract:
- *   - The `OrbState` type reuses the live one from `ui-orb.ts`.
- *   - The production caller (a thin hook in `apply()`) is expected
- *     to (1) call `synthesizeLabel`, (2) skip `setWorkingMessage`
- *     when the result is structurally equal to the previous result,
- *     (3) trailing-edge debounce 100ms so `tool_call→tool_result`
- *     produces one label, not two flashes.
+ *   - Activity states are internal lifecycle labels, not user-facing orb modes.
+ *   - The production caller consumes them through the single activity rail
+ *     and only updates the rail when the derived state or message changes.
  *
  * V2 addendum: the `intent` field is gated — V1 ignores it. When a
  * caller passes `input.intent`, the function still returns the V1
@@ -24,7 +21,21 @@
  * later, behind a `pi.environment.intent` capability check.
  */
 
-import { ORB_LABELS, ORB_STATES, stateForTool, type OrbState } from "./ui-orb.ts";
+type OrbState = "working" | "searching" | "solving" | "listening" | "composing" | "shaping";
+const ORB_STATES: readonly OrbState[] = ["working", "searching", "solving", "listening", "composing", "shaping"];
+const ORB_LABELS: Record<OrbState, string> = {
+	working: "Working",
+	searching: "Searching",
+	solving: "Solving",
+	listening: "Listening",
+	composing: "Composing",
+	shaping: "Shaping",
+};
+function stateForTool(toolName: string): OrbState {
+	if (["read", "grep", "find", "ls", "search", "web_search"].includes(toolName)) return "searching";
+	if (["edit", "write", "apply_patch"].includes(toolName)) return "shaping";
+	return "working";
+}
 
 /**
  * The set of Pi lifecycle events acidbath already subscribes to in
@@ -136,7 +147,7 @@ function basenameOf(path: string): string {
 }
 
 function isOrbState(value: string): value is OrbState {
-	return (ORB_STATES as readonly string[]).includes(value);
+	return (ORB_STATES as readonly string[]).includes(value as OrbState);
 }
 
 /**
@@ -147,9 +158,7 @@ function isOrbState(value: string): value is OrbState {
  * searching, edit/write → shaping, else → working decision) and
  * the render-time `args` to produce a context-aware message.
  *
- * No model output is parsed, no timers are started, no
- * `setWorkingMessage` is invoked. The caller owns the churn guard
- * and the trailing-edge debounce.
+ * No model output is parsed, no timers are started, and no UI is touched.
  */
 export function synthesizeLabel(input: LabelInput): LabelOutput {
 	const event = input.event;

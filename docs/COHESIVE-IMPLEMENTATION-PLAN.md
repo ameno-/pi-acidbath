@@ -1,6 +1,8 @@
 # Acidbath + Herdr cohesive cleanup and refinement plan
 
-**Status:** proposed implementation authority; no runtime/settings/deletion work has been applied by this document.
+**Status:** implementation authority for the remaining extension cleanup. The original orb, context-pyramid, footer-lyric, and tool-motion experiments have now been archived; the active runtime is a single lifecycle presentation with static transcript rows and one transient activity rail.
+
+**Current direction update:** capability profiles are not part of Acidbath's runtime. The default package is the full approved development composition; Pi's native TUI/RPC/print modes remain intact. Research/web access remain explicit package capabilities, while AST-grep is still under safety evaluation. Sections below that describe profiles, orb/context placement, footer lyrics, or tool-motion controls are historical design evidence and must not be treated as current implementation tasks.
 
 **Scope:** Acidbath core UI, tool-output presentation, Pi/Herdr integration, local subagent orchestration and messaging, research/web access, compaction continuation, profile composition, extension/package cleanup, telemetry/egress policy, tests, migration, and rollback.
 

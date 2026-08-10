@@ -1,6 +1,7 @@
 # Terminal animation research
 
-_Status: research only; no production UI wiring._
+_Status: archived research; the production runtime intentionally keeps only
+one transient activity animation._
 
 ## Recommendation
 
