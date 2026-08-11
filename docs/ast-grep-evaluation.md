@@ -2,36 +2,32 @@
 
 ## Current finding
 
-AST-grep is not currently a Pi mode problem. The host has `ast-grep 0.45.0`
-installed at `/opt/homebrew/bin/ast-grep`, but the configured `pi-ast-grep`
-package is an object-form global package entry and Pi reports it as filtered.
-Acidbath does not currently load an AST-grep extension.
+AST-grep is not currently loaded by Acidbath. The host has `ast-grep 0.45.0`
+installed at `/opt/homebrew/bin/ast-grep`, but the previously configured
+third-party `pi-ast-grep` entry was filtered by Pi. The attempted npm candidate
+was uninstalled without being retained as a dependency. The current direction
+is the dependency-free Acidbath-native wrapper described in
+`docs/ast-grep-native-design.md`.
 
 ## Candidate comparison
 
 | Candidate | Search | Rewrite safety | Process/security | Recommendation |
 |---|---|---|---|---|
 | `code-yeongyu/pi-ast-grep` | Focused `ast_grep_search`; good structured output | `ast_grep_replace` is dry-run by default, but `dryRun=false` applies directly without a human confirmation; paths are broadly accepted | argv-based CLI, bounded output, but includes a last-resort GitHub binary download | Good search reference; do not enable mutation unchanged |
-| `bjoernaagaard/pi-ast-grep` / `@juvio15/pi-ast-grep` | `run`, `scan`, `outline`, language catalog; bounded matches, context, threads | Rewrite defaults to preview, records a preview fingerprint, requires the matching preview before headless apply, and uses Pi's file mutation queue | Explicit argv CLI, bounded schemas, deterministic PATH/env resolution, no auto-download | Safest current extension candidate; prefer after compatibility smoke test |
+| `bjoernaagaard/pi-ast-grep` / `@juvio15/pi-ast-grep` | `run`, `scan`, `outline`, language catalog; bounded matches, context, threads | Rewrite defaults to preview, records a preview fingerprint, requires the matching preview before headless apply, and uses Pi's file mutation queue | Stronger controls than the other candidate, but still an unaudited third-party Pi extension with filesystem/process authority | Reject as a direct dependency; retain patterns as design reference |
 | `oh-my-pi` native AST tools | Fast in-process structural search/edit | Separate read and edit permission surfaces; native implementation avoids CLI/IPC | Not compatible as a dependency: it uses a separate `@oh-my-pi/*` runtime | Reference only |
 | Raw `sg` CLI | Fast and reliable for local execution | No Pi-level confirmation, preview bookkeeping, or mutation queue | Safe only when wrapped with argv, path bounds, output caps, and a trusted binary path | Engine only, not the model-facing integration |
 | Plain `grep` / `rg` | Best for literal text and regex | No structural rewrite | Mature and fast, but syntax-blind | Keep for text search; AST-grep is complementary |
 
-## Proposed Acidbath policy
+## Acidbath policy
 
-1. Load AST-grep search by default in the single full-development composition.
-2. Prefer `bjoernaagaard/pi-ast-grep` if its Pi 0.84 compatibility smoke test
-   passes; otherwise adapt its safety patterns into a small local wrapper.
-3. Keep rewrite visible as a preview-capable tool, but require all of:
-   - an explicit `apply: true`/`dryRun: false` request;
-   - a matching preview fingerprint from the same session;
-   - Pi's mutation queue;
-   - a user confirmation when a TUI is available;
-   - cwd/path and symlink boundary checks.
-4. If mutation is disabled entirely, expose search only. Enabling mutation
-   should be a deliberate `/ast-grep enable-replace` action followed by a
-   fresh Pi reload, or an explicit environment setting at launch. Do not
-   silently add write authority in-band.
+1. Do not add a third-party AST-grep Pi extension or parser dependency.
+2. Build the model-facing tools inside Acidbath around an explicitly trusted,
+   already-installed system binary, with no download fallback.
+3. Enable read-only structural search and preview by default.
+4. Keep replacement inactive until `/ast-grep enable-replace` and require the
+   preview, hash, path, queue, and confirmation gates in
+   `docs/ast-grep-native-design.md`.
 5. Keep `grep`/`rg` for plain text. The model should choose AST-grep only when
    the query depends on syntax structure.
 
