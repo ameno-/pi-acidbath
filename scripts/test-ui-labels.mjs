@@ -127,18 +127,11 @@ for (const name of shapeTools) {
 	});
 }
 
-const workTools = ["bash", "ast_grep_search", "ast_grep_replace", "agy_subagent", "subagent", "complete_research_request", "droid", "weird_tool"];
+const workTools = ["bash", "ast_grep_search", "ast_grep_replace", "ast_grep_run", "ast_grep_scan", "agy_subagent", "subagent", "complete_research_request", "droid", "weird_tool"];
 for (const name of workTools) {
 	run(`tool_call ${name} → working`, () => {
 		const out = synthesizeLabel({ event: "tool_call", toolName: name });
 		assert(`${name}.state`, out.orbState === "working", `got=${out.orbState}`);
-	});
-}
-
-for (const name of ["ast_grep_run", "ast_grep_scan"]) {
-	run(`tool_call ${name} → searching`, () => {
-		const out = synthesizeLabel({ event: "tool_call", toolName: name });
-		assert(`${name}.state`, out.orbState === "searching", `got=${out.orbState}`);
 	});
 }
 

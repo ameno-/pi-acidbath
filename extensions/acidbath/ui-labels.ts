@@ -32,8 +32,8 @@ const ORB_LABELS: Record<OrbState, string> = {
 	shaping: "Shaping",
 };
 function stateForTool(toolName: string): OrbState {
-	if (["read", "grep", "find", "ls", "search", "web_search", "ast_grep_run", "ast_grep_scan", "ast_grep_outline", "ast_grep_languages"].includes(toolName)) return "searching";
-	if (["edit", "write", "apply_patch", "ast_grep_rewrite"].includes(toolName)) return "shaping";
+	if (["read", "grep", "find", "ls", "search", "web_search"].includes(toolName)) return "searching";
+	if (["edit", "write", "apply_patch"].includes(toolName)) return "shaping";
 	return "working";
 }
 

@@ -16,7 +16,6 @@ Standalone Pi package containing UI-focused enhancements extracted from `pi-herd
 - Reusable custom themes (`acidbath`, `acidbath-cyberdyne-teal`)
 - Bundled AGY research tools from [`ameno-/pi-research`](https://github.com/ameno-/pi-research): `agy_web_search` and `agy_research`
 - Explicit [`pi-web-access`](https://github.com/nicobailon/pi-web-access) capability: `web_search`, `fetch_content`, `get_search_content`, and `source_check` for pages, PDFs, video, GitHub, and evidence retrieval
-- Structural AST search/rewrite from [`@juvio15/pi-ast-grep`](https://github.com/bjoernaagaard/pi-ast-grep), with preview-first rewrites, path bounds, and Pi's mutation queue
 
 ## Install (local dev)
 
@@ -51,8 +50,6 @@ Optional environment toggle:
 - `/preflight` — show startup metadata and rerun checks
 - `/acidbath-update` — with confirmation, run `pi update --extensions` then `pi update`
 - `/agy-setup` — explicitly configure AGY headless permissions
-- `/ast-grep-check` — verify the local AST-grep binary and loaded tools
-- `/ast-grep-rules [list|validate|save|delete] ...` — manage bounded project rules
 
 ## Publish to npm
 
