@@ -33,12 +33,28 @@ were moved, not deleted, to:
 
 - `packages`: local Acidbath only;
 - `extensions`: no active global extension material;
-- `skills`: all global skills excluded from Pi loading;
+- `skills`: an explicit allowlist of ten skills, all symlinked into Pi from
+  `/Users/ameno/dev/lib/skills/`;
 - no custom global theme selection;
 - prompts remain excluded.
 
-Global skill files remain on disk for possible later review, but they are not
-visible to Pi under the current resource filters.
+The active Pi skill symlinks are:
+
+```text
+agent-browser
+agent-delegate
+codebase-navigation
+context-budget
+git-commits
+karpathy-guidelines
+model-router
+pi-headless-sessions
+session-completion
+workflow-recall
+```
+
+Previously installed non-library copies and external symlinks were moved to
+`~/.pi/agent/backups/pi-global-cleanup-2026-08-11/`.
 
 ## Acidbath project dependencies
 
@@ -59,9 +75,26 @@ are configuration/data rather than extension packages and need a separate
 explicit reset decision to avoid destroying working authentication or provider
 setup.
 
+## Skill library integration
+
+`/Users/ameno/dev/lib` is the canonical skill repository and `~/skills` points
+to it. The library currently validates 55 shared skills and 55 manifests; its
+lockfile was regenerated to remove drift. Pi's ten active skill entries are
+symlinks created by:
+
+```bash
+cd ~/skills && ./scripts/skills deploy pi
+```
+
+The deployment target is now declared in the library registry. It only deploys
+reviewed entries marked with `build_targets: [.., pi]`; it does not copy or
+install arbitrary global skill directories. The new `pi-headless-sessions`
+skill replaces the retired `interactive-shell` workflow for Pi-to-Pi workers.
+
 ## Maintenance rule
 
-Use the local Acidbath package as the only global package entry. Add new
-third-party packages only to a project-local manifest after source/provenance,
-install-script, dependency, capability, and audit review. For experiments, use
-`pi -e` or a temporary package without adding it to global settings.
+Use the local Acidbath package as the only global package entry. Use the
+canonical library as the only Pi skill source. Add new third-party packages or
+skills only to a project-local manifest after source/provenance, install-script,
+dependency, capability, and audit review. For experiments, use `pi -e` or a
+temporary package without adding it to global settings.
