@@ -10,6 +10,11 @@ import type {
 type ToolMotionState = "pending" | "success" | "error";
 import { formatToolRow } from "./ui-tool-rows.js";
 
+// Four box-drawing characters for the pending left-border animation.
+// Cycles through the accent palette without relying on a timer.
+const BORDER_GLYPHS = ["║", "┃", "│", "┃"];
+const BORDER_PHASE_COUNT = BORDER_GLYPHS.length;
+
 interface ToolRowState {
 	toolCallId: string;
 	toolName: string;
@@ -27,6 +32,8 @@ interface ToolRowState {
 
 interface AcidbathRendererState {
 	acidbathToolRow?: ToolRowState;
+	/** Per-tool-call border animation phase; advances on partial renderResult events. */
+	borderPhase?: number;
 }
 
 type AnyToolDefinition = ToolDefinition<any, any, any>;
@@ -49,12 +56,15 @@ type AnyResultOptions = ToolRenderResultOptions;
 /** Presentation contract for one tool. Execution stays in ui-tools.ts. */
 export interface CompactToolRendererOptions {
 	noColor: boolean;
+	reducedMotion: boolean;
 }
 
 class ToolRowComponent implements Component {
 	private readonly row: ToolRowState;
 	private readonly theme: Theme;
 	private readonly noColor: boolean;
+	private readonly reducedMotion: boolean;
+	private readonly borderPhase: number;
 	private readonly details: Component | undefined;
 	private readonly previewLines: string[];
 	private readonly previewHidden: number;
@@ -67,6 +77,8 @@ class ToolRowComponent implements Component {
 		row: ToolRowState,
 		theme: Theme,
 		noColor: boolean,
+		reducedMotion: boolean,
+		borderPhase: number,
 		details: Component | undefined,
 		previewLines: readonly string[],
 		previewHidden: number,
@@ -76,6 +88,8 @@ class ToolRowComponent implements Component {
 		this.row = row;
 		this.theme = theme;
 		this.noColor = noColor;
+		this.reducedMotion = reducedMotion;
+		this.borderPhase = borderPhase;
 		this.details = details;
 		this.previewLines = [...previewLines];
 		this.previewHidden = previewHidden;
@@ -87,8 +101,11 @@ class ToolRowComponent implements Component {
 		const safeWidth = Math.max(1, Math.trunc(width));
 		if (this.cachedLines && this.cachedWidth === safeWidth) return this.cachedLines;
 		if (this.hideWhenSettled && this.row.status !== "pending") return [];
+
 		const plain = formatToolRow({
 			width: safeWidth,
+			statusGlyph: "",
+			toolGlyph: "",
 			toolName: this.row.toolName,
 			target: this.row.target,
 			status: this.row.status,
@@ -98,11 +115,37 @@ class ToolRowComponent implements Component {
 		});
 		const lifecycleColor = this.row.status === "error" ? "error" : this.row.status === "success" ? "success" : "accent";
 		const styled = this.noColor ? plain : styleToolRow(plain, this.row.toolName, lifecycleColor, this.theme);
+
+		// Left-border animation: animated glyph during pending, static on settle.
+		// Dropped below 40 columns and in NO_COLOR mode.
+		let borderGlyph = "";
+		let borderColor: "accent" | "success" | "error" | undefined;
+		if (!this.noColor && safeWidth >= 40 && !this.hideWhenSettled) {
+			if (this.row.status === "pending") {
+				if (!this.reducedMotion) {
+					borderGlyph = BORDER_GLYPHS[this.borderPhase % BORDER_PHASE_COUNT];
+					borderColor = "accent";
+				} else {
+					borderGlyph = "│";
+					borderColor = "accent";
+				}
+			} else if (this.row.status === "error") {
+				borderGlyph = "┃";
+				borderColor = "error";
+			} else {
+				borderGlyph = "│";
+				borderColor = "success";
+			}
+		}
+		const border = borderGlyph && borderColor
+			? `${this.theme.fg(borderColor, borderGlyph)} `
+			: this.noColor ? "" : "";
+
 		// Native tool renderers can emit OSC-8 hyperlinks and other terminal
 		// sequences. Use Pi's width helpers here; the local gauge helpers are
 		// intentionally smaller and do not understand every sequence Pi emits.
-		const lines = [tuiTruncateToWidth(styled, safeWidth, "…")];
-		const indent = " ".repeat(4);
+		const lines = [tuiTruncateToWidth(`${border}${styled}`, safeWidth, "…")];
+		const indent = this.noColor ? "    " : `${this.theme.fg("dim", "  ")}  `;
 		if (!this.expanded && this.previewLines.length > 0) {
 			const previewColor = this.row.status === "error" ? "error" : "toolOutput";
 			for (const previewLine of this.previewLines) {
@@ -172,7 +215,7 @@ export function createCompactToolRenderers(
 	factory: (cwd: string) => AnyToolDefinition,
 	options: CompactToolRendererOptions,
 ): Pick<AnyToolDefinition, "renderCall" | "renderResult"> {
-	const { noColor } = options;
+	const { noColor, reducedMotion } = options;
 
 	return {
 		renderCall(args: unknown, theme: Theme, context: AnyRendererContext): Component {
@@ -184,7 +227,9 @@ export function createCompactToolRenderers(
 				row.target = targetForTool(definition.name, row.args);
 				row.callInvalidate = context.invalidate;
 			}
-			return new ToolRowComponent(row, theme, noColor, undefined, [], 0, false, true);
+			const state = rendererState(context);
+			const borderPhase = state.borderPhase ?? 0;
+			return new ToolRowComponent(row, theme, noColor, reducedMotion, borderPhase, undefined, [], 0, false, true);
 		},
 
 		renderResult(
@@ -201,6 +246,15 @@ export function createCompactToolRenderers(
 				? ["running"]
 				: metadataForTool(definition.name, row.args, result as Record<string, unknown>);
 			row.truncated = hasTruncation(result as Record<string, unknown>);
+
+			// Advance the left-border animation phase on each partial result.
+			// This is an event-driven counter — no timer required.
+			const state = rendererState(context);
+			if (resultOptions.isPartial) {
+				state.borderPhase = ((state.borderPhase ?? 0) + 1) % BORDER_PHASE_COUNT;
+			}
+			const borderPhase = state.borderPhase ?? 0;
+
 			// Expanded rows never display the compact preview. Avoid repeatedly
 			// splitting large streaming results that Pi will render natively.
 			const preview = resultOptions.expanded ? { lines: [], hidden: 0 } : previewForResult(definition.name, result);
@@ -229,7 +283,7 @@ export function createCompactToolRenderers(
 					row.nativeDetails = undefined;
 				}
 			}
-			return new ToolRowComponent(row, theme, noColor, row.nativeDetails, row.previewLines, row.previewHidden, resultOptions.expanded);
+			return new ToolRowComponent(row, theme, noColor, reducedMotion, borderPhase, row.nativeDetails, row.previewLines, row.previewHidden, resultOptions.expanded);
 		},
 	};
 }

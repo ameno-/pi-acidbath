@@ -106,7 +106,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 
 	// Renderer callbacks must remain presentation-only. Lifecycle events below
 	// own labels so partial tool redraws cannot trigger recursive UI renders.
-	registerToolRenderers(pi, { noColor: !COLOR_ENABLED });
+	registerToolRenderers(pi, { noColor: !COLOR_ENABLED, reducedMotion: REDUCED_MOTION });
 	const recordStatus = (status: string, message?: string): void => {
 		lifecycleState = reduceLifecycle(lifecycleState, { type: "status", status, message });
 		statusTimings.transition(status, performance.now());
