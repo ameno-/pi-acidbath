@@ -17,9 +17,10 @@ function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDeta
 	pi: ExtensionAPI,
 	factory: (cwd: string) => ToolDefinition<TParams, TDetails, TState>,
 	noColor: boolean,
+	reducedMotion: boolean,
 ): void {
 	const definition = factory(process.cwd());
-	const presentation = createCompactToolRenderers(definition, factory, { noColor });
+	const presentation = createCompactToolRenderers(definition, factory, { noColor, reducedMotion });
 	pi.registerTool({
 		...definition,
 		...presentation,
@@ -32,13 +33,13 @@ function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDeta
 /** Install one static transcript policy for Acidbath-owned built-ins. */
 export function registerToolRenderers(
 	pi: ExtensionAPI,
-	options: { noColor: boolean },
+	options: { noColor: boolean; reducedMotion: boolean },
 ): void {
-	registerWrappedTool(pi, createReadToolDefinition, options.noColor);
-	registerWrappedTool(pi, createBashToolDefinition, options.noColor);
-	registerWrappedTool(pi, createEditToolDefinition, options.noColor);
-	registerWrappedTool(pi, createWriteToolDefinition, options.noColor);
-	registerWrappedTool(pi, createGrepToolDefinition, options.noColor);
-	registerWrappedTool(pi, createFindToolDefinition, options.noColor);
-	registerWrappedTool(pi, createLsToolDefinition, options.noColor);
+	registerWrappedTool(pi, createReadToolDefinition, options.noColor, options.reducedMotion);
+	registerWrappedTool(pi, createBashToolDefinition, options.noColor, options.reducedMotion);
+	registerWrappedTool(pi, createEditToolDefinition, options.noColor, options.reducedMotion);
+	registerWrappedTool(pi, createWriteToolDefinition, options.noColor, options.reducedMotion);
+	registerWrappedTool(pi, createGrepToolDefinition, options.noColor, options.reducedMotion);
+	registerWrappedTool(pi, createFindToolDefinition, options.noColor, options.reducedMotion);
+	registerWrappedTool(pi, createLsToolDefinition, options.noColor, options.reducedMotion);
 }
