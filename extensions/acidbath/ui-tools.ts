@@ -24,6 +24,7 @@ function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDeta
 	pi.registerTool({
 		...definition,
 		...presentation,
+		renderShell: "self",
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			return factory(ctx.cwd).execute(toolCallId, params, signal, onUpdate, ctx);
 		},
