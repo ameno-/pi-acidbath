@@ -51,7 +51,9 @@ interface WorkingUi {
 
 const REDUCED_MOTION = process.env.PI_ACIDBATH_REDUCED_MOTION === "1";
 const COLOR_ENABLED = process.env.NO_COLOR === undefined;
-
+// Provider events can arrive token-by-token. Keep preview work bounded so it
+// cannot monopolize the same event loop that accepts terminal input.
+const THINKING_PREVIEW_INTERVAL_MS = 100;
 
 function workingUi(ctx: ExtensionContext): WorkingUi {
 	return ctx.ui as unknown as WorkingUi;
@@ -92,7 +94,6 @@ class BorderlessEditor extends CustomEditor {
 }
 
 export default function acidbath(pi: ExtensionAPI): void {
-	let lastContext: ExtensionContext | undefined;
 	let footerWidget: AcidbathFooter | undefined;
 	let branchName = "—";
 	let editorWidget: BorderlessEditor | undefined;
@@ -103,12 +104,9 @@ export default function acidbath(pi: ExtensionAPI): void {
 		new AgentOutputBanner(entry.data as AgentOutputEntryData, theme, !COLOR_ENABLED),
 	);
 
-	registerToolRenderers(pi, {
-		noColor: !COLOR_ENABLED,
-		onLabel: (input) => {
-			if (lastContext) updateLabel(input, lastContext);
-		},
-	});
+	// Renderer callbacks must remain presentation-only. Lifecycle events below
+	// own labels so partial tool redraws cannot trigger recursive UI renders.
+	registerToolRenderers(pi, { noColor: !COLOR_ENABLED });
 	const recordStatus = (status: string, message?: string): void => {
 		lifecycleState = reduceLifecycle(lifecycleState, { type: "status", status, message });
 		statusTimings.transition(status, performance.now());
@@ -127,6 +125,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 	let headerWidget: AcidbathHeader | undefined;
 	let welcomeWidget: AcidbathWelcome | undefined;
 	let sessionSummary = DEFAULT_SESSION_SUMMARY;
+	let lastThinkingPreviewAt = Number.NEGATIVE_INFINITY;
 
 	const refreshBranch = async (ctx: ExtensionContext): Promise<void> => {
 		try {
@@ -202,8 +201,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 		headerWidget?.update({ summary: sessionSummary });
 	};
 
-	function updateLabel(input: LabelInput, ctx: ExtensionContext): void {
-		lastContext = ctx;
+	function updateLabel(input: LabelInput): void {
 		const output = synthesizeLabel(input);
 		lifecycleState = reduceLifecycle(lifecycleState, {
 			type: "message",
@@ -218,7 +216,6 @@ export default function acidbath(pi: ExtensionAPI): void {
 			reasoningPreview: lifecycleState.reasoningPreview,
 		});
 		footerWidget?.update({ tokenContext });
-		void ctx;
 	}
 
 	const dispatchTokenEvent = (event: TokenContextEvent): void => {
@@ -279,7 +276,6 @@ export default function acidbath(pi: ExtensionAPI): void {
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
-		lastContext = ctx;
 		lifecycleState = reduceLifecycle(lifecycleState, { type: "session", generation: `session-${contextSequence + 1}` });
 		statusTimings.reset("settled", performance.now());
 		sessionSummary = DEFAULT_SESSION_SUMMARY;
@@ -290,9 +286,8 @@ export default function acidbath(pi: ExtensionAPI): void {
 		// Suppress Pi's per-block collapsed labels. The live activity widget
 		// below replaces them with one in-place reasoning preview per run.
 		ctx.ui.setHiddenThinkingLabel("");
-		// Use Pi's native transcript as the only tool history surface. Tool
-		// results are expanded by default and remain collapsible with Ctrl+O.
-		ctx.ui.setToolsExpanded(true);
+		// Keep Pi's current expansion preference. Forcing every native detail
+		// open makes each streaming frame re-render potentially huge tool output.
 		ctx.ui.setWorkingVisible?.(false);
 		ctx.ui.setWidget(
 			ACTIVITY_STATUS_WIDGET_KEY,
@@ -374,51 +369,59 @@ export default function acidbath(pi: ExtensionAPI): void {
 		recordStatus("agent-start", "starting");
 		generation = `run-${++contextSequence}`;
 		dispatchTokenEvent({ type: "agent_start", generation });
-		updateLabel({ event: "agent_start" }, ctx);
+		lastThinkingPreviewAt = Number.NEGATIVE_INFINITY;
+		updateLabel({ event: "agent_start" });
 	});
 	pi.on("turn_start", async () => {
 		recordStatus("turn-boundary", "working");
 	});
 	pi.on("before_provider_request", async (_event, ctx) => {
 		recordStatus("provider-wait", "listening");
-		updateLabel({ event: "before_provider_request" }, ctx);
+		updateLabel({ event: "before_provider_request" });
 		pushContextUsage(ctx);
 	});
 	pi.on("after_provider_response", async (event, ctx) => {
 		const providerFailed = event.status >= 400;
 		recordStatus(providerFailed ? "provider-error" : "reasoning", providerFailed ? `provider error ${event.status}` : "working");
-		updateLabel({ event: "after_provider_response" }, ctx);
+		updateLabel({ event: "after_provider_response" });
 		activityStatusWidget?.update({ reasoningActive: !providerFailed, reasoningPreview: "" });
 		pushContextUsage(ctx);
 	});
-	pi.on("message_update", async (event, ctx) => {
+	pi.on("message_update", async (event) => {
 		const streamType = (event.assistantMessageEvent as unknown as Record<string, unknown>).type;
 		if (typeof streamType === "string" && streamType.startsWith("thinking_")) {
 			recordStatus("reasoning");
-			activityStatusWidget?.update({
-				reasoningActive: streamType !== "thinking_end",
-				reasoningPreview: thinkingPreview(thinkingTextFromMessage(event.message)),
-			});
+			const now = performance.now();
+			const isBoundary = streamType === "thinking_start" || streamType === "thinking_end";
+			if (isBoundary || now - lastThinkingPreviewAt >= THINKING_PREVIEW_INTERVAL_MS) {
+				lastThinkingPreviewAt = now;
+				activityStatusWidget?.update({
+					reasoningActive: streamType !== "thinking_end",
+					reasoningPreview: thinkingPreview(thinkingTextFromMessage(event.message)),
+				});
+			}
 		} else if (typeof streamType === "string" && streamType.startsWith("text_")) {
+			const enteringComposing = lifecycleState.status !== "composing";
 			recordStatus("composing");
 			activityStatusWidget?.update({ reasoningActive: false });
-			updateLabel({ event: "message_update" }, ctx);
+			if (enteringComposing) updateLabel({ event: "message_update" });
 		} else if (streamType === "error") {
 			recordStatus("error");
 			activityStatusWidget?.update({ message: "response error", reasoningActive: false });
 		} else if (streamType === "done") {
 			recordStatus("response-done");
 		}
-		pushContextUsage(ctx);
+		// Context estimation scans the accumulated assistant output. Sampling it
+		// for every token is quadratic; lifecycle boundaries below are sufficient.
 	});
 	pi.on("tool_call", async (event, ctx) => {
 		recordStatus("tool-running", "running tool");
-		updateLabel({ event: "tool_call", toolName: event.toolName }, ctx);
+		updateLabel({ event: "tool_call", toolName: event.toolName, toolArgs: event.input as Record<string, unknown> });
 		pushContextUsage(ctx);
 	});
 	pi.on("tool_result", async (event, ctx) => {
 		recordStatus(event.isError ? "tool-error" : "tool-result", event.isError ? "tool error" : "tool complete");
-		updateLabel({ event: "tool_result", toolName: event.toolName, isError: event.isError }, ctx);
+		updateLabel({ event: "tool_result", toolName: event.toolName, toolArgs: event.input as Record<string, unknown>, isError: event.isError });
 		pushContextUsage(ctx);
 	});
 	// The native Pi transcript owns tool history. Acidbath only projects the
@@ -446,7 +449,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 		const endedWithError = aborted || stopReasons.includes("error");
 		recordStatus(aborted ? "aborted" : endedWithError ? "error" : "done", aborted ? "aborted" : endedWithError ? "error" : "done");
 		pushFinalUsage(event.messages);
-		updateLabel({ event: "agent_end" }, ctx);
+		updateLabel({ event: "agent_end" });
 		dispatchTokenEvent({ type: "agent_end", outcome: endedWithError ? "error" : "success" });
 		pushContextUsage(ctx);
 	});
@@ -456,7 +459,6 @@ export default function acidbath(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
-		lastContext = ctx;
 		const ui = workingUi(ctx);
 		ui.setWorkingVisible?.(true);
 		activityStatusWidget?.dispose();
@@ -479,6 +481,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 		generation = "session-0";
 		lifecycleState = { ...INITIAL_LIFECYCLE_STATE };
 		thinkingLevel = "default";
+		lastThinkingPreviewAt = Number.NEGATIVE_INFINITY;
 	});
 
 	pi.registerCommand("status-timings", {

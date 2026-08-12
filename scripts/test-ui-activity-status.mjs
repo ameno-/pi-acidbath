@@ -32,22 +32,30 @@ assert("strips terminal control sequences", thinkingPreview("safe\x1b[31m red\x1
 assert("keeps short preview intact", thinkingPreview("short thought", 20) === "short thought");
 assert("tail-truncates long preview", thinkingPreview("0123456789", 6) === "…56789");
 assert("handles empty preview", thinkingPreview(undefined) === "");
+const boundedTail = thinkingPreview(`${"prefix ".repeat(100_000)}final thought`, 20);
+assert("bounds work to the visible tail", boundedTail.endsWith("final thought") && boundedTail.length <= 20);
 
-const tui = { requestRender() {} };
+let renderRequests = 0;
+const tui = { requestRender() { renderRequests += 1; } };
 const theme = {
 	fg(_color, text) { return text; },
 	bold(text) { return text; },
 };
 const widget = new AcidbathActivityStatus(tui, theme, true, true);
 widget.update({ visible: true, reasoningActive: true, reasoningPreview: "latest thought" });
-const reasoningRow = widget.render(80).join("\n");
+const requestsAfterUpdate = renderRequests;
+widget.update({ visible: true, reasoningActive: true, reasoningPreview: "latest thought" });
+assert("same-state update does not request another render", renderRequests === requestsAfterUpdate);
+const cachedReasoningLines = widget.render(80);
+assert("same-state render reuses cached lines", widget.render(80) === cachedReasoningLines);
+const reasoningRow = cachedReasoningLines.join("\n");
 assert("renders reasoning in the shared activity rail", reasoningRow.startsWith("◇ reasoning  latest thought"));
 assert("truncates reasoning row to width", visibleWidth(widget.render(12)[0]) <= 12);
 widget.update({ kind: "listening", reasoningActive: false, message: "Listening…" });
 assert("renders listening in the shared activity rail", widget.render(80)[0] === "◇ listening  Listening…");
 widget.update({ kind: "editing", message: "Editing auth.ts" });
 assert("renders tool status in the shared activity rail", widget.render(80)[0] === "◇ editing  Editing auth.ts");
-widget.update({ message: "settled" });
+widget.update({ kind: "settled", message: "settled" });
 assert("hides settled status without reserving a row", widget.render(80).length === 0);
 widget.update({ visible: false });
 assert("hides without reserving a row", widget.render(80).length === 0);

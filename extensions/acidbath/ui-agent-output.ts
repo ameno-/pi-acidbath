@@ -27,29 +27,37 @@ export function normalizePromptPreview(prompt: string): string {
 }
 
 export class AgentOutputBanner implements Component {
-	private readonly data: AgentOutputEntryData;
 	private readonly theme: Theme;
 	private readonly noColor: boolean;
+	private readonly timestamp: string;
+	private readonly prompt: string;
+	private cachedWidth: number | undefined;
+	private cachedLines: string[] | undefined;
 
 	constructor(data: AgentOutputEntryData, theme: Theme, noColor: boolean) {
-		this.data = data;
 		this.theme = theme;
 		this.noColor = noColor;
+		this.timestamp = formatAgentTimestamp(data.timestamp);
+		this.prompt = normalizePromptPreview(data.prompt) || "(empty prompt)";
 	}
 
 	render(width: number): string[] {
 		if (width <= 0) return [];
 		const safeWidth = Math.max(1, Math.trunc(width));
-		const timestamp = formatAgentTimestamp(this.data.timestamp);
-		const prompt = normalizePromptPreview(this.data.prompt) || "(empty prompt)";
-		const prefix = ` AGENT OUTPUT · ${timestamp} · `;
+		if (this.cachedLines && this.cachedWidth === safeWidth) return this.cachedLines;
+		const prefix = ` AGENT OUTPUT · ${this.timestamp} · `;
 		const available = Math.max(1, safeWidth - visibleWidth(prefix) - 1);
-		const promptText = truncateToWidth(prompt, available);
+		const promptText = truncateToWidth(this.prompt, available);
 		const raw = truncateToWidth(`${prefix}${promptText}`, safeWidth, "");
 		const padded = `${raw}${" ".repeat(Math.max(0, safeWidth - visibleWidth(raw)))}`;
-		if (this.noColor) return [padded];
-		return [this.theme.bg("customMessageBg", this.theme.fg("customMessageText", padded))];
+		const lines = [this.noColor ? padded : this.theme.bg("customMessageBg", this.theme.fg("customMessageText", padded))];
+		this.cachedWidth = safeWidth;
+		this.cachedLines = lines;
+		return lines;
 	}
 
-	invalidate(): void {}
+	invalidate(): void {
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
+	}
 }

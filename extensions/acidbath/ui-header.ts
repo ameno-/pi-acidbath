@@ -168,6 +168,8 @@ export class AcidbathHeader implements Component {
 	private readonly theme: Theme;
 	private readonly noColor: boolean;
 	private state: AcidbathHeaderState;
+	private cachedWidth: number | undefined;
+	private cachedLines: string[] | undefined;
 
 	constructor(_tui: TUI, theme: Theme, _modelName: string | undefined, _cwd: string, noColor: boolean, summary = DEFAULT_SESSION_SUMMARY) {
 		this.tui = _tui;
@@ -177,15 +179,24 @@ export class AcidbathHeader implements Component {
 	}
 
 	public update(next: Partial<AcidbathHeaderState>): void {
-		this.state = { ...this.state, ...next };
+		const state = { ...this.state, ...next };
+		if (state.summary === this.state.summary) return;
+		this.state = state;
+		this.invalidate();
 		this.tui.requestRender();
 	}
 
 	public render(width: number): string[] {
-		return renderHeaderLines(width, this.theme, this.noColor, this.state.summary);
+		const safeWidth = Math.max(1, Math.trunc(width));
+		if (this.cachedLines && this.cachedWidth === safeWidth) return this.cachedLines;
+		const lines = renderHeaderLines(safeWidth, this.theme, this.noColor, this.state.summary);
+		this.cachedWidth = safeWidth;
+		this.cachedLines = lines;
+		return lines;
 	}
 
 	public invalidate(): void {
-		// The header is rendered from the current theme on every pass.
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
 	}
 }

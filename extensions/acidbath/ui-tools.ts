@@ -12,16 +12,14 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { createCompactToolRenderers } from "./ui-tool-renderers.js";
-import type { LabelInput } from "./ui-labels.js";
 
 function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDetails, TState>(
 	pi: ExtensionAPI,
 	factory: (cwd: string) => ToolDefinition<TParams, TDetails, TState>,
 	noColor: boolean,
-	onLabel: ((input: LabelInput) => void) | undefined,
 ): void {
 	const definition = factory(process.cwd());
-	const presentation = createCompactToolRenderers(definition, factory, { noColor, onLabel });
+	const presentation = createCompactToolRenderers(definition, factory, { noColor });
 	pi.registerTool({
 		...definition,
 		...presentation,
@@ -34,13 +32,13 @@ function registerWrappedTool<TParams extends ToolDefinition["parameters"], TDeta
 /** Install one static transcript policy for Acidbath-owned built-ins. */
 export function registerToolRenderers(
 	pi: ExtensionAPI,
-	options: { noColor: boolean; onLabel?: (input: LabelInput) => void },
+	options: { noColor: boolean },
 ): void {
-	registerWrappedTool(pi, createReadToolDefinition, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createBashToolDefinition, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createEditToolDefinition, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createWriteToolDefinition, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createGrepToolDefinition, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createFindToolDefinition, options.noColor, options.onLabel);
-	registerWrappedTool(pi, createLsToolDefinition, options.noColor, options.onLabel);
+	registerWrappedTool(pi, createReadToolDefinition, options.noColor);
+	registerWrappedTool(pi, createBashToolDefinition, options.noColor);
+	registerWrappedTool(pi, createEditToolDefinition, options.noColor);
+	registerWrappedTool(pi, createWriteToolDefinition, options.noColor);
+	registerWrappedTool(pi, createGrepToolDefinition, options.noColor);
+	registerWrappedTool(pi, createFindToolDefinition, options.noColor);
+	registerWrappedTool(pi, createLsToolDefinition, options.noColor);
 }

@@ -9,7 +9,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 type ToolMotionState = "pending" | "success" | "error";
 import { formatToolRow } from "./ui-tool-rows.js";
-import type { LabelInput } from "./ui-labels.js";
 
 interface ToolRowState {
 	toolCallId: string;
@@ -50,7 +49,6 @@ type AnyResultOptions = ToolRenderResultOptions;
 /** Presentation contract for one tool. Execution stays in ui-tools.ts. */
 export interface CompactToolRendererOptions {
 	noColor: boolean;
-	onLabel?: (input: LabelInput) => void;
 }
 
 class ToolRowComponent implements Component {
@@ -62,6 +60,8 @@ class ToolRowComponent implements Component {
 	private readonly previewHidden: number;
 	private readonly expanded: boolean;
 	private readonly hideWhenSettled: boolean;
+	private cachedWidth: number | undefined;
+	private cachedLines: string[] | undefined;
 
 	constructor(
 		row: ToolRowState,
@@ -84,9 +84,11 @@ class ToolRowComponent implements Component {
 	}
 
 	render(width: number): string[] {
+		const safeWidth = Math.max(1, Math.trunc(width));
+		if (this.cachedLines && this.cachedWidth === safeWidth) return this.cachedLines;
 		if (this.hideWhenSettled && this.row.status !== "pending") return [];
 		const plain = formatToolRow({
-			width,
+			width: safeWidth,
 			toolName: this.row.toolName,
 			target: this.row.target,
 			status: this.row.status,
@@ -99,26 +101,30 @@ class ToolRowComponent implements Component {
 		// Native tool renderers can emit OSC-8 hyperlinks and other terminal
 		// sequences. Use Pi's width helpers here; the local gauge helpers are
 		// intentionally smaller and do not understand every sequence Pi emits.
-		const lines = [tuiTruncateToWidth(styled, width, "…")];
+		const lines = [tuiTruncateToWidth(styled, safeWidth, "…")];
 		const indent = " ".repeat(4);
 		if (!this.expanded && this.previewLines.length > 0) {
 			const previewColor = this.row.status === "error" ? "error" : "toolOutput";
 			for (const previewLine of this.previewLines) {
 				const preview = `${this.theme.fg("dim", "  ")}${this.theme.fg(previewColor, previewLine)}`;
-				lines.push(tuiTruncateToWidth(`${indent}${preview}`, width, "…"));
+				lines.push(tuiTruncateToWidth(`${indent}${preview}`, safeWidth, "…"));
 			}
 			if (this.previewHidden > 0) {
 				const noun = this.previewHidden === 1 ? "line" : "lines";
-				lines.push(tuiTruncateToWidth(`${indent}${this.theme.fg("dim", "  … ")}${this.previewHidden} more ${noun} · expand`, width, "…"));
+				lines.push(tuiTruncateToWidth(`${indent}${this.theme.fg("dim", "  … ")}${this.previewHidden} more ${noun} · expand`, safeWidth, "…"));
 			}
 		}
 		if (this.expanded && this.details) {
-			for (const line of this.details.render(Math.max(1, width))) lines.push(tuiTruncateToWidth(`${indent}${line}`, width, "…"));
+			for (const line of this.details.render(safeWidth)) lines.push(tuiTruncateToWidth(`${indent}${line}`, safeWidth, "…"));
 		}
+		this.cachedWidth = safeWidth;
+		this.cachedLines = lines;
 		return lines;
 	}
 
 	invalidate(): void {
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
 		this.details?.invalidate();
 	}
 }
@@ -166,17 +172,10 @@ export function createCompactToolRenderers(
 	factory: (cwd: string) => AnyToolDefinition,
 	options: CompactToolRendererOptions,
 ): Pick<AnyToolDefinition, "renderCall" | "renderResult"> {
-	const { noColor, onLabel } = options;
+	const { noColor } = options;
 
 	return {
 		renderCall(args: unknown, theme: Theme, context: AnyRendererContext): Component {
-			onLabel?.({
-				event: "tool_call",
-				toolName: definition.name,
-				toolArgs: args as Record<string, unknown>,
-				isPartial: context.isPartial,
-				isError: context.isError,
-			});
 			const row = getOrCreateRow(context, definition.name, args as Record<string, unknown>);
 			// A call slot remains pending until its result slot settles. Once
 			// settled, do not reinstall its invalidation callback during redraw.
@@ -194,13 +193,6 @@ export function createCompactToolRenderers(
 			theme: Theme,
 			context: AnyRendererContext,
 		): Component {
-			onLabel?.({
-				event: "tool_result",
-				toolName: definition.name,
-				toolArgs: context.args as Record<string, unknown>,
-				isPartial: resultOptions.isPartial,
-				isError: context.isError,
-			});
 			const row = getOrCreateRow(context, definition.name, context.args as Record<string, unknown>);
 			row.status = context.isError ? "error" : resultOptions.isPartial ? "pending" : "success";
 			row.settled = !resultOptions.isPartial;
@@ -209,7 +201,9 @@ export function createCompactToolRenderers(
 				? ["running"]
 				: metadataForTool(definition.name, row.args, result as Record<string, unknown>);
 			row.truncated = hasTruncation(result as Record<string, unknown>);
-			const preview = previewForResult(definition.name, result);
+			// Expanded rows never display the compact preview. Avoid repeatedly
+			// splitting large streaming results that Pi will render natively.
+			const preview = resultOptions.expanded ? { lines: [], hidden: 0 } : previewForResult(definition.name, result);
 			row.previewLines = preview.lines;
 			row.previewHidden = preview.hidden;
 			if (row.status !== "pending") {

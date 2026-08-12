@@ -27,6 +27,8 @@ export class AcidbathFooter implements Component {
 	private readonly noColor: boolean;
 	private readonly tui: TUI;
 	private state: AcidbathFooterState = { ...DEFAULT_STATE };
+	private cachedWidth: number | undefined;
+	private cachedLines: string[] | undefined;
 
 	constructor(tui: TUI, theme: Theme, cwd: string, noColor: boolean) {
 		this.tui = tui;
@@ -36,12 +38,31 @@ export class AcidbathFooter implements Component {
 	}
 
 	public update(next: Partial<AcidbathFooterState>): void {
-		this.state = { ...this.state, ...next };
+		const state = { ...this.state, ...next };
+		if (sameFooterState(this.state, state)) return;
+		this.state = state;
+		this.invalidate();
 		this.tui.requestRender();
 	}
 
 	public render(width: number): string[] {
 		const safeWidth = Math.max(1, Math.trunc(width));
+		if (this.cachedLines && this.cachedWidth === safeWidth) return this.cachedLines;
+		const lines = [this.renderLine(safeWidth)];
+		this.cachedWidth = safeWidth;
+		this.cachedLines = lines;
+		return lines;
+	}
+
+	public invalidate(): void {
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
+	}
+	public dispose(): void {
+		this.invalidate();
+	}
+
+	private renderLine(safeWidth: number): string {
 		const model = this.state.modelName || "model";
 		const location = basename(this.cwd) || this.cwd;
 		const context = this.state.contextVisible ? this.contextLabel(CONTEXT_SLOT_WIDTH) : "";
@@ -49,18 +70,15 @@ export class AcidbathFooter implements Component {
 		const right = [context, usage].filter(Boolean).join(" ");
 		const identity = this.fullIdentity(location, model);
 		const full = this.fit(identity, right, safeWidth);
-		if (full) return [this.renderParts(full.left, full.right, safeWidth)];
+		if (full) return this.renderParts(full.left, full.right, safeWidth);
 		const compact = this.fit(this.compactIdentity(location, model), right, safeWidth);
-		if (compact) return [this.renderParts(compact.left, compact.right, safeWidth)];
+		if (compact) return this.renderParts(compact.left, compact.right, safeWidth);
 		const dockOnly = this.fit("", right, safeWidth);
-		if (dockOnly) return [this.renderParts(dockOnly.left, dockOnly.right, safeWidth)];
+		if (dockOnly) return this.renderParts(dockOnly.left, dockOnly.right, safeWidth);
 		const contextOnly = this.fit("acidbath", context, safeWidth);
-		if (contextOnly) return [this.renderParts(contextOnly.left, contextOnly.right, safeWidth)];
-		return [truncateToWidth(this.leftColor("acidbath", "muted"), safeWidth)];
+		if (contextOnly) return this.renderParts(contextOnly.left, contextOnly.right, safeWidth);
+		return truncateToWidth(this.leftColor("acidbath", "muted"), safeWidth);
 	}
-
-	public invalidate(): void {}
-	public dispose(): void {}
 
 	private fullIdentity(location: string, model: string): string {
 		const directory = location === "acidbath" ? "acidbath" : `acidbath · ${location}`;
@@ -109,4 +127,12 @@ export class AcidbathFooter implements Component {
 		const gap = " ".repeat(Math.max(2, width - visibleWidth(left) - visibleWidth(right)));
 		return truncateToWidth(`${left}${gap}${rightText}`, width);
 	}
+}
+
+function sameFooterState(left: AcidbathFooterState, right: AcidbathFooterState): boolean {
+	return left.modelName === right.modelName
+		&& left.branchName === right.branchName
+		&& left.contextPercent === right.contextPercent
+		&& left.contextVisible === right.contextVisible
+		&& left.tokenContext === right.tokenContext;
 }

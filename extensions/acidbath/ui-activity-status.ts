@@ -2,11 +2,14 @@
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
+import { isGenericMessage, lyricFor, lyricKind, LYRIC_MAX_VISIBLE_WIDTH, type LyricKind } from "./ui-lyrics.ts";
 
 export const ACTIVITY_STATUS_WIDGET_KEY = "acidbath-activity-status";
 
 const MAX_PREVIEW_CHARS = 240;
-const REASONING_GLOW_INTERVAL_MS = 112;
+// Phase advances on real lifecycle events, not on a timer. The minimum
+// interval prevents strobing during fast token-by-token streaming.
+const MIN_PHASE_ADVANCE_MS = 80;
 const CONTROL_OR_ANSI = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 const GLOW_PHASES = ["dim", "muted", "accent", "bold", "accent", "muted"] as const;
 
@@ -51,7 +54,12 @@ export function thinkingTextFromMessage(message: unknown): string | undefined {
 /** Build a terminal-safe, one-line tail preview without mutating source content. */
 export function thinkingPreview(text: string | undefined, maxChars = MAX_PREVIEW_CHARS): string {
 	if (!text || maxChars <= 0) return "";
-	const normalized = text.replace(CONTROL_OR_ANSI, "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+	// Provider messages contain the entire accumulated thinking block on each
+	// delta. Only its tail can be visible, so avoid repeatedly normalizing an
+	// ever-growing string (quadratic work over a long response).
+	const sampleLimit = Math.max(maxChars * 8, maxChars + 256);
+	const sample = text.length > sampleLimit ? text.slice(-sampleLimit) : text;
+	const normalized = sample.replace(CONTROL_OR_ANSI, "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
 	if (normalized.length <= maxChars) return normalized;
 	if (maxChars === 1) return "…";
 	let tail = normalized.slice(-(maxChars - 1));
@@ -67,7 +75,9 @@ export class AcidbathActivityStatus implements Component {
 	private readonly noColor: boolean;
 	private state: ActivityStatusState = { ...INITIAL_STATE };
 	private glowPhase = 0;
-	private timer: ReturnType<typeof setInterval> | undefined;
+	private lastPhaseAdvanceAt = 0;
+	private cachedWidth: number | undefined;
+	private cachedLines: string[] | undefined;
 
 	constructor(tui: TUI, theme: Theme, reducedMotion: boolean, noColor: boolean) {
 		this.tui = tui;
@@ -80,22 +90,58 @@ export class AcidbathActivityStatus implements Component {
 		const next = { ...this.state, ...update };
 		if (sameState(this.state, next)) return;
 		this.state = next;
-		this.syncTimer();
+		this.clearRenderCache();
+		// Advance the glow phase on every real state change (lifecycle
+		// events already trigger tui.requestRender through the caller).
+		// Throttle so fast streaming doesn't strobe through the palette.
+		const now = performance.now();
+		if (now - this.lastPhaseAdvanceAt >= MIN_PHASE_ADVANCE_MS) {
+			this.glowPhase = (this.glowPhase + 1) % GLOW_PHASES.length;
+			this.lastPhaseAdvanceAt = now;
+		}
 		this.tui.requestRender();
 	}
 
 	render(width: number): string[] {
-		const active = this.state.reasoningActive || this.hasActiveMessage();
-		if (!this.state.visible || !active || width <= 0) return [];
-		const detail = this.state.reasoningActive ? this.state.reasoningPreview || "…" : this.state.message || "…";
-		return [truncateToWidth(`◇ ${this.glowingLabel(this.state.reasoningActive ? "reasoning" : this.state.kind)}  ${this.muted(detail)}`, Math.max(1, Math.trunc(width)))];
+		if (width <= 0) return [];
+		const safeWidth = Math.max(1, Math.trunc(width));
+		if (this.cachedLines && this.cachedWidth === safeWidth) return this.cachedLines;
+		if (!this.state.visible) return [];
+		if (!this.state.reasoningActive && !this.isActiveKind()) return [];
+
+		// Resolve the lyric set from the current lifecycle kind.
+		const rawKind = this.state.reasoningActive ? "reasoning" : this.state.kind;
+		const kind: LyricKind = lyricKind(rawKind);
+
+		let label: string;
+		if (this.noColor) {
+			label = rawKind;
+		} else {
+			const lyric = lyricFor(kind, this.glowPhase);
+			label = this.glowingLabel(truncateToWidth(lyric, LYRIC_MAX_VISIBLE_WIDTH));
+		}
+
+		// Detail is shown only when it adds specific information the lyric
+		// doesn't convey (file paths, commands, result stats).
+		const detail = this.state.reasoningActive
+			? this.state.reasoningPreview || ""
+			: isGenericMessage(this.state.message) ? "" : this.state.message;
+		const detailText = detail ? `  ${this.muted(detail)}` : "";
+
+		const lines = [truncateToWidth(`◇ ${label}${detailText}`, safeWidth)];
+		this.cachedWidth = safeWidth;
+		this.cachedLines = lines;
+		return lines;
 	}
 
-	invalidate(): void {}
+	invalidate(): void {
+		this.clearRenderCache();
+	}
 
 	dispose(): void {
-	if (this.timer !== undefined) clearInterval(this.timer);
-	this.timer = undefined;
+		// No timer to release — the phase advances on real events.
+		this.glowPhase = 0;
+		this.clearRenderCache();
 	}
 
 	private glowingLabel(text: string): string {
@@ -106,7 +152,7 @@ export class AcidbathActivityStatus implements Component {
 	}
 
 	private statusColor(): "accent" | "warning" | "success" {
-		if (this.state.kind === "listening" || this.state.kind === "searching") return "accent";
+		if (this.state.kind === "listening") return "accent";
 		if (this.state.kind === "composing") return "success";
 		return "warning";
 	}
@@ -115,22 +161,14 @@ export class AcidbathActivityStatus implements Component {
 		return this.noColor ? text : this.theme.fg("muted", text);
 	}
 
-	private hasActiveMessage(): boolean {
-		return !["", "settled", "done", "turn complete", "context compacted"].includes(this.state.message.trim().toLowerCase());
+	/** True when the lifecycle kind represents active work that should show the widget. */
+	private isActiveKind(): boolean {
+		return this.state.kind !== "settled" && this.state.kind !== "done" && this.state.kind !== "";
 	}
 
-	private syncTimer(): void {
-		const shouldRun = this.state.visible && !this.reducedMotion && (this.state.reasoningActive || this.hasActiveMessage());
-		if (shouldRun && this.timer === undefined) {
-			this.timer = setInterval(() => {
-				this.glowPhase = (this.glowPhase + 1) % GLOW_PHASES.length;
-				this.tui.requestRender();
-			}, REASONING_GLOW_INTERVAL_MS);
-		} else if (!shouldRun && this.timer !== undefined) {
-			clearInterval(this.timer);
-			this.timer = undefined;
-			this.glowPhase = 0;
-		}
+	private clearRenderCache(): void {
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
 	}
 }
 
