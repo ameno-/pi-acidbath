@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Acidbath Tool Rendering — Visual Explainer</title>
+<style>
+  :root {
+    --bg: #0d0d0f;
+    --surface: #151518;
+    --surface2: #1c1c22;
+    --border: #2a2a35;
+    --text: #e0e0e8;
+    --text-dim: #888898;
+    --text-muted: #5a5a6a;
+    --rose: #EDAFB8;
+    --sky: #8ACDEA;
+    --gold: #F5BB00;
+    --burnt: #BB4430;
+    --teal: #4EFFEF;
+    --diff-added: #2d5a3d;
+    --diff-removed: #5a2d2d;
+    --error: #BB4430;
+    --success-bg: #0d1a10;
+    --pending-bg: #15122a;
+    --error-bg: #1a0f0d;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    line-height: 1.5;
+    padding: 2rem;
+  }
+
+  .container { max-width: 960px; margin: 0 auto; }
+
+  h1 {
+    font-size: 1.6rem; font-weight: 600; margin-bottom: 0.25rem;
+    color: var(--rose);
+  }
+
+  .subtitle { color: var(--text-dim); margin-bottom: 2rem; font-size: 0.9rem; }
+
+  h2 {
+    font-size: 1.2rem; font-weight: 600; margin: 2.5rem 0 1rem 0;
+    padding-bottom: 0.4rem; border-bottom: 1px solid var(--border);
+    color: var(--sky);
+  }
+
+  h3 { font-size: 1rem; font-weight: 600; margin: 1.5rem 0 0.75rem 0; color: var(--teal); }
+
+  .section-desc { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 1rem; }
+
+  .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1rem 0; }
+  @media (max-width: 700px) { .options-grid { grid-template-columns: 1fr; } }
+
+  .option-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem;
+  }
+
+  .option-card h4 { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem; }
+
+  .badge {
+    font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 4px; font-weight: 600;
+  }
+  .badge.build { background: #1a2a3a; color: var(--sky); }
+  .badge.skip  { background: #2a2a3a; color: var(--text-muted); }
+
+  .terminal {
+    background: #0a0a0f; border: 1px solid #1a1a2a; border-radius: 6px;
+    font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 0.78rem; line-height: 1.5; padding: 0.75rem;
+    overflow-x: auto; white-space: pre; tab-size: 4;
+  }
+
+  .c-success { color: var(--gold); }
+  .c-error   { color: var(--burnt); font-weight: 700; }
+  .c-pending { color: var(--sky); }
+  .c-tool    { color: var(--teal); }
+  .c-meta    { color: var(--text-muted); }
+  .c-target  { color: var(--text); }
+  .c-dim     { color: var(--text-dim); }
+  .c-sep     { color: #3a3a4a; }
+  .c-add     { color: var(--teal); }
+  .c-rem     { color: var(--burnt); }
+  .c-ctx     { color: var(--text-dim); }
+  .c-gutter  { color: var(--text-muted); }
+  .c-rule    { color: #2a2a3a; }
+  .c-trunc   { color: var(--text-muted); font-style: italic; }
+
+  /* Pending pulse */
+  @keyframes pulse-sky {
+    0%, 100% { opacity: 0.5; }
+    50%      { opacity: 1; }
+  }
+  .pending-pulse { animation: pulse-sky 1.2s ease-in-out infinite; }
+
+  /* Tool animation cycles */
+  @keyframes anim-read {
+    0%   { content: "(￣ω￣)"; }
+    50%  { content: "(￣～￣)"; }
+    100% { content: "(￣ω￣)"; }
+  }
+  @keyframes anim-bash {
+    0%   { content: "(ﾟﾍﾟ)"; }
+    33%  { content: "(ﾟДﾟ)"; }
+    66%  { content: "(;ﾟДﾟ)"; }
+    100% { content: "(ﾟﾍﾟ)"; }
+  }
+  @keyframes anim-edit {
+    0%   { content: "(｡•̀ᴗ-)✧"; }
+    33%  { content: "(｡•̀ᴗ-)/"; }
+    66%  { content: "(；•̀ᴗ-)"; }
+    100% { content: "(｡•̀ᴗ-)✧"; }
+  }
+  @keyframes anim-write {
+    0%   { content: "(✧ω✧)"; }
+    33%  { content: "✧(ω✧)"; }
+    66%  { content: "(✧_✧)"; }
+    100% { content: "(✧ω✧)"; }
+  }
+  @keyframes anim-grep {
+    0%   { content: "(｀・ω・´)"; }
+    33%  { content: "(｀・ω・`)"; }
+    66%  { content: "(｀ﾟωﾟ´)"; }
+    100% { content: "(｀・ω・´)"; }
+  }
+  @keyframes anim-ls {
+    0%   { content: "(゜▽゜)"; }
+    33%  { content: "(゜-゜)"; }
+    66%  { content: "(゜Д゜)"; }
+    100% { content: "(゜▽゜)"; }
+  }
+  @keyframes anim-find {
+    0%   { content: "(｀∀´)"; }
+    33%  { content: "(｀・ω・´)"; }
+    66%  { content: "(｀Д´)"; }
+    100% { content: "(｀∀´)"; }
+  }
+
+  .tool-anim-read  { animation: anim-read  1.8s steps(2) infinite; }
+  .tool-anim-bash  { animation: anim-bash  1.2s steps(3) infinite; }
+  .tool-anim-edit  { animation: anim-edit  1.6s steps(3) infinite; }
+  .tool-anim-write { animation: anim-write 1.6s steps(3) infinite; }
+  .tool-anim-grep  { animation: anim-grep  2.0s steps(3) infinite; }
+  .tool-anim-ls    { animation: anim-ls    1.8s steps(3) infinite; }
+  .tool-anim-find  { animation: anim-find  1.8s steps(3) infinite; }
+
+  .anim-inline { display: inline-block; min-width: 10ch; text-align: center; }
+
+  @media (prefers-reduced-motion) {
+    .tool-anim-read, .tool-anim-bash, .tool-anim-edit,
+    .tool-anim-write, .tool-anim-grep, .tool-anim-ls, .tool-anim-find,
+    .pending-pulse { animation: none !important; }
+  }
+
+  .state-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 0.25rem; }
+
+  .callout {
+    background: var(--surface); border-left: 3px solid var(--teal);
+    padding: 0.75rem 1rem; border-radius: 0 6px 6px 0;
+    margin: 1rem 0; font-size: 0.85rem; color: var(--text-dim);
+  }
+  .callout strong { color: var(--text); }
+
+  .vocab-row {
+    display: flex; gap: 1.5rem; flex-wrap: wrap;
+    margin: 0.5rem 0 1.5rem 0; padding: 0.75rem;
+    background: var(--surface); border-radius: 8px; border: 1px solid var(--border);
+  }
+
+  .vocab-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
+  .vocab-glyph {
+    font-family: monospace; font-weight: 700; padding: 0.1rem 0.35rem;
+    border-radius: 4px; background: var(--surface2); font-size: 0.8rem;
+  }
+
+  .vocab-glyph.swag   { color: var(--gold); }
+  .vocab-glyph.told   { color: var(--burnt); }
+  .vocab-glyph.gtfo   { color: var(--burnt); }
+  .vocab-glyph.lumpy  { color: var(--sky); }
+
+  .decision-table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.85rem; }
+  .decision-table th { text-align: left; padding: 0.5rem 0.75rem; background: var(--surface2); border-bottom: 2px solid var(--border); color: var(--text-dim); font-weight: 600; font-size: 0.8rem; }
+  .decision-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); }
+  .decision-table tr:hover td { background: var(--surface); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>🧪 Acidbath Tool Rendering · Visual Explainer</h1>
+<p class="subtitle">
+  Pure kaomoji glyphs — one per status, one per tool. No Unicode emoji. All ASCII.<br>
+  <span style="color:var(--text-muted)">Animations loop while pending, driven by one shared 800ms clock tick.</span>
+</p>
+
+<!-- ==================== STATUS VOCAB ==================== -->
+<h2>Status vocabulary</h2>
+<div class="vocab-row">
+  <div class="vocab-item">
+    <span class="vocab-glyph swag">(⌐■_■)</span>
+    <span style="color:var(--gold)">swag</span>
+    <span class="c-dim">— settled success</span>
+  </div>
+  <div class="vocab-item">
+    <span class="vocab-glyph told">(￣▽￣)ノ</span>
+    <span style="color:var(--burnt)">told you</span>
+    <span class="c-dim">— settled error</span>
+  </div>
+  <div class="vocab-item">
+    <span class="vocab-glyph gtfo">(╯°□°)╯︵ ┻━┻</span>
+    <span style="color:var(--burnt)">GTFO</span>
+    <span class="c-dim">— warning</span>
+  </div>
+  <div class="vocab-item">
+    <span class="vocab-glyph lumpy">(◕‿◕)</span>
+    <span style="color:var(--sky)">lumpy</span>
+    <span class="c-dim">— pending (pulses)</span>
+  </div>
+</div>
+
+<!-- ==================== ALL TOOLS ==================== -->
+<h2>Tool glyph map</h2>
+<p class="section-desc">Each tool has a settled kaomoji and a looping animation cycle while pending.</p>
+
+<table class="decision-table">
+  <thead>
+    <tr>
+      <th>Tool</th>
+      <th>Settled glyph</th>
+      <th>Animation cycle (looped)</th>
+      <th>Tick frames</th>
+      <th>Vibe</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>read</td><td><span class="c-tool">(￣ω￣)</span></td><td><span class="c-tool">(￣ω￣)</span> → <span class="c-tool">(￣～￣)</span></td><td>2</td><td>Peaceful reading, occasional blink</td></tr>
+    <tr><td>bash</td><td><span class="c-tool">(ﾟﾍﾟ)</span></td><td><span class="c-tool">(ﾟﾍﾟ)</span> → <span class="c-tool">(ﾟДﾟ)</span> → <span class="c-tool">(;ﾟДﾟ)</span></td><td>3</td><td>Intense → stressed → frantic → loop</td></tr>
+    <tr><td>edit</td><td><span class="c-tool">(｡•̀ᴗ-)✧</span></td><td><span class="c-tool">(｡•̀ᴗ-)✧</span> → <span class="c-tool">(｡•̀ᴗ-)/</span> → <span class="c-tool">(；•̀ᴗ-)</span></td><td>3</td><td>Editing → waving → worried → loop</td></tr>
+    <tr><td>write</td><td><span class="c-tool">(✧ω✧)</span></td><td><span class="c-tool">(✧ω✧)</span> → <span class="c-tool">✧(ω✧)</span> → <span class="c-tool">(✧_✧)</span></td><td>3</td><td>Flow → shifting → lost → loop</td></tr>
+    <tr><td>grep</td><td><span class="c-tool">(｀・ω・´)</span></td><td><span class="c-tool">(｀・ω・´)</span> → <span class="c-tool">(｀・ω・`)</span> → <span class="c-tool">(｀ﾟωﾟ´)</span></td><td>3</td><td>Alert → searching hard → intense → loop</td></tr>
+    <tr><td>ls</td><td><span class="c-tool">(゜▽゜)</span></td><td><span class="c-tool">(゜▽゜)</span> → <span class="c-tool">(゜-゜)</span> → <span class="c-tool">(゜Д゜)</span></td><td>3</td><td>Looking → confused → overwhelmed → loop</td></tr>
+    <tr><td>find</td><td><span class="c-tool">(｀∀´)</span></td><td><span class="c-tool">(｀∀´)</span> → <span class="c-tool">(｀・ω・´)</span> → <span class="c-tool">(｀Д´)</span></td><td>3</td><td>Confident → alert → determined → loop</td></tr>
+  </tbody>
+</table>
+
+<!-- ==================== RENDERED MOCKUPS ==================== -->
+<h2>Rendered mockups (80 cols)</h2>
+
+<h3>Settled success</h3>
+<div class="terminal">
+<span class="c-success">(⌐■_■)</span> <span class="c-tool">(￣ω￣)</span> extensions/acidbath/index.ts  <span class="c-meta">214 lines</span>
+<span class="c-success">(⌐■_■)</span> <span class="c-tool">(ﾟﾍﾟ)</span> npm test  <span class="c-meta">exit 0 · 8.4s</span>
+<span class="c-success">(⌐■_■)</span> <span class="c-tool">(｡•̀ᴗ-)✧</span> extensions/acidbath/index.ts  <span class="c-add">+24</span> <span class="c-rem">−11</span>
+<span class="c-success">(⌐■_■)</span> <span class="c-tool">(✧ω✧)</span> extensions/acidbath/new.ts  <span class="c-meta">created ·</span> <span class="c-add">+47</span>
+<span class="c-success">(⌐■_■)</span> <span class="c-tool">(｀・ω・´)</span> renderResult · extensions  <span class="c-meta">12 matches · 3 files</span>
+<span class="c-success">(⌐■_■)</span> <span class="c-tool">(゜▽゜)</span> extensions/acidbath  <span class="c-meta">14 entries</span>
+<span class="c-success">(⌐■_■)</span> <span class="c-tool">(｀∀´)</span> *.ts · src  <span class="c-meta">47 results</span>
+</div>
+
+<h3>Pending (animated)</h3>
+<div class="terminal">
+<span class="c-pending"><span class="pending-pulse">(◕‿◕)</span></span> <span class="c-tool"><span class="anim-inline tool-anim-bash">(ﾟﾍﾟ)</span></span> npm test  <span class="c-meta">running · 4.2s</span>
+<span class="c-pending"><span class="pending-pulse">(◕‿◕)</span></span> <span class="c-tool"><span class="anim-inline tool-anim-grep">(｀・ω・´)</span></span> renderResult · extensions  <span class="c-meta">searching</span>
+<span class="c-pending"><span class="pending-pulse">(◕‿◕)</span></span> <span class="c-tool"><span class="anim-inline tool-anim-edit">(｡•̀ᴗ-)✧</span></span> …/index.ts  <span class="c-add">+24</span> <span class="c-rem">−11</span> <span class="c-meta">pending</span>
+</div>
+
+<h3>Error / warning</h3>
+<div class="terminal">
+<span class="c-error">(￣▽￣)ノ</span> <span class="c-tool">(￣ω￣)</span> no-such-file.ts  <span class="c-meta">file not found</span>
+<span class="c-error">(￣▽￣)ノ</span> <span class="c-tool">(ﾟﾍﾟ)</span> npm test  <span class="c-meta">exit 1 · 2.3s</span>
+<span class="c-error">(╯°□°)╯︵ ┻━┻</span> <span class="c-tool">(｡•̀ᴗ-)✧</span> …/index.ts  <span class="c-meta">old text not found</span>
+</div>
+
+<!-- ==================== TOOL-SPECIFIC EXPANDED ==================== -->
+<h2>Expanded views</h2>
+
+<div class="options-grid">
+  <!-- Bash expanded -->
+  <div class="option-card">
+    <h4>bash — framed output</h4>
+    <div class="terminal"><span class="c-success">(⌐■_■)</span> <span class="c-tool">(ﾟﾍﾟ)</span> npm test  <span class="c-meta">exit 0 · 8.4s</span>
+<span class="c-rule">────────────────────────────────────────────────────────────────────────</span>
+  &gt; acidbath@0.1.0 test
+  &gt; vitest run
+
+  ✓ tests/ui-tool-renderers.test.ts (2 tests) 12ms
+<span class="c-trunc">  … 3 more lines</span>
+<span class="c-rule">────────────────────────────────────────────────────────────────────────</span></div>
+  </div>
+
+  <!-- Edit expanded -->
+  <div class="option-card">
+    <h4>edit — unified diff</h4>
+    <div class="terminal"><span class="c-success">(⌐■_■)</span> <span class="c-tool">(｡•̀ᴗ-)✧</span> extensions/acidbath/index.ts  <span class="c-add">+24</span> <span class="c-rem">−11</span>
+<span class="c-rule">────────────────────────────────────────────────────────────────────────</span>
+  <span class="c-gutter">  41  </span><span class="c-ctx">const before = value;</span>
+  <span class="c-gutter">  42  </span>
+  <span class="c-rem">  −43  </span><span class="c-rem">renderEverything(before);</span>
+  <span class="c-add">  +43  </span><span class="c-add">renderVisibleDetail(before, width);</span>
+  <span class="c-gutter">  44  </span>
+  <span class="c-gutter">  45  </span><span class="c-ctx">cache.set(key, lines);</span>
+<span class="c-rule">────────────────────────────────────────────────────────────────────────</span></div>
+  </div>
+
+  <!-- Grep expanded -->
+  <div class="option-card">
+    <h4>grep — context lines</h4>
+    <div class="terminal"><span class="c-success">(⌐■_■)</span> <span class="c-tool">(｀・ω・´)</span> renderResult · extensions  <span class="c-meta">12 matches · 3 files</span>
+  <span class="c-meta">extensions/acidbath/ui-tool-renderers.ts</span>
+  <span class="c-gutter">  141  </span>const preview = previewForResult(name, result);
+  <span class="c-gutter">  142  </span><span class="c-dim">return previewForResult(…</span>
+  <span class="c-gutter">  143  </span>row.previewLines = preview.lines;
+  <span class="c-sep">  ──</span>
+  <span class="c-meta">extensions/acidbath/ui-tools.ts</span>
+  <span class="c-gutter">   27  </span>const definition = factory(cwd);
+  <span class="c-gutter">   28  </span><span class="c-dim">presentation = createComp…</span>
+  <span class="c-gutter">   29  </span>pi.registerTool({
+  <span class="c-trunc">  … 3 files · 9 more matches</span></div>
+  </div>
+
+  <!-- LS tree expanded -->
+  <div class="option-card">
+    <h4>ls — tree view</h4>
+    <div class="terminal"><span class="c-success">(⌐■_■)</span> <span class="c-tool">(゜▽゜)</span> extensions/acidbath  <span class="c-meta">14 entries</span>
+  <span class="c-target">index.ts</span>
+  <span class="c-target">ui-tool-renderers.ts</span>
+  <span class="c-target">rendering/</span>
+  <span class="c-dim">  ├── kaomoji.ts</span>
+  <span class="c-dim">  ├── motion.ts</span>
+  <span class="c-dim">  └── diff-view.ts</span>
+  <span class="c-trunc">  … 8 more entries</span></div>
+  </div>
+
+  <!-- Find tree expanded -->
+  <div class="option-card">
+    <h4>find — tree view</h4>
+    <div class="terminal"><span class="c-success">(⌐■_■)</span> <span class="c-tool">(｀∀´)</span> *.ts · src  <span class="c-meta">47 results</span>
+  <span class="c-target">src/</span>
+  <span class="c-dim">  ├── index.ts</span>
+  <span class="c-dim">  ├── util.ts</span>
+  <span class="c-dim">  └── components/</span>
+  <span class="c-dim">      ├── header.ts</span>
+  <span class="c-dim">      └── footer.ts</span>
+  <span class="c-trunc">  … 42 more results</span></div>
+  </div>
+</div>
+
+<!-- ==================== FULL SESSION ==================== -->
+<h2>Full transcript mockup</h2>
+<div class="terminal">
+<span class="c-pending"><span class="pending-pulse">(◕‿◕)</span></span> <span class="c-tool"><span class="anim-inline tool-anim-grep">(｀・ω・´)</span></span> renderResult · extensions  <span class="c-meta">running · 1.2s</span>
+<span class="c-success">(⌐■_■)</span> <span class="c-tool">(￣ω￣)</span> extensions/acidbath/index.ts  <span class="c-meta">214 lines</span>
+<span class="c-success">(⌐■_■)</span> <span class="c-tool">(｡•̀ᴗ-)✧</span> extensions/acidbath/ui-tool-renderers.ts  <span class="c-add">+24</span> <span class="c-rem">−11</span>
+<span class="c-success">(⌐■_■)</span> <span class="c-tool">(゜▽゜)</span> extensions/acidbath  <span class="c-meta">14 entries</span>
+<span class="c-error">(￣▽￣)ノ</span> <span class="c-tool">(ﾟﾍﾟ)</span> npm test  <span class="c-meta">exit 1 · 2.3s · expand for output</span>
+</div>
+
+<!-- ==================== WIDTH ==================== -->
+<h2>Width survival</h2>
+<p class="section-desc">Degradation order: metadata → secondary scope → target path basename → core (status + tool + target).</p>
+
+<table class="decision-table">
+  <thead><tr><th>Tool</th><th>40 cols</th><th>60 cols</th><th>80 cols</th><th>120 cols</th></tr></thead>
+  <tbody>
+    <tr><td><span class="c-tool">(￣ω￣)</span> read</td>
+        <td><span class="c-dim">(⌐■_■) (￣ω￣) …/index.ts</span></td>
+        <td><span class="c-dim">(⌐■_■) (￣ω￣) …/index.ts · 214 lines</span></td>
+        <td><span class="c-dim">(⌐■_■) (￣ω￣) extensions…/index.ts · 214 lines</span></td>
+        <td><span class="c-dim">(⌐■_■) (￣ω￣) extensions/acidbath/index.ts · 214 lines</span></td></tr>
+    <tr><td><span class="c-tool">(ﾟﾍﾟ)</span> bash</td>
+        <td><span class="c-dim">(⌐■_■) (ﾟﾍﾟ) npm test</span></td>
+        <td><span class="c-dim">(⌐■_■) (ﾟﾍﾟ) npm test · exit 0</span></td>
+        <td><span class="c-dim">(⌐■_■) (ﾟﾍﾟ) npm test · exit 0 · 8.4s</span></td>
+        <td><span class="c-dim">(⌐■_■) (ﾟﾍﾟ) npm test && git diff · exit 0</span></td></tr>
+    <tr><td><span class="c-tool">(｡•̀ᴗ-)✧</span> edit</td>
+        <td><span class="c-dim">(⌐■_■) (｡•̀ᴗ-)✧ …/index.ts</span></td>
+        <td><span class="c-dim">(⌐■_■) (｡•̀ᴗ-)✧ …/index.ts · +24 −11</span></td>
+        <td><span class="c-dim">(⌐■_■) (｡•̀ᴗ-)✧ extensions…/index.ts · +24 −11</span></td>
+        <td><span class="c-dim">(⌐■_■) (｡•̀ᴗ-)✧ extensions/…/index.ts · +24 −11</span></td></tr>
+    <tr><td><span class="c-tool">(｀・ω・´)</span> grep</td>
+        <td><span class="c-dim">(⌐■_■) (｀・ω・´) renderResult</span></td>
+        <td><span class="c-dim">(⌐■_■) (｀・ω・´) renderResult · 12 matches</span></td>
+        <td><span class="c-dim">(⌐■_■) (｀・ω・´) renderResult · extensions · 12 matches</span></td>
+        <td><span class="c-dim">(⌐■_■) (｀・ω・´) renderResult · extensions · 12 matches</span></td></tr>
+  </tbody>
+</table>
+
+<!-- ==================== ARCHITECTURE ==================== -->
+<h2>Files built</h2>
+
+<table class="decision-table">
+  <thead><tr><th>File</th><th>What it does</th><th>Collapsed work</th></tr></thead>
+  <tbody>
+    <tr><td><code>rendering/kaomoji.ts</code></td><td>Kaomoji catalog: status glyphs, tool glyphs, animation frame arrays</td><td><span class="c-success">O(1)</span></td></tr>
+    <tr><td><code>rendering/motion.ts</code></td><td>Shared clock: one setInterval, Map of toolCallId→invalidate callbacks</td><td><span class="c-success">O(1)</span></td></tr>
+    <tr><td><code>ui-tool-rows.ts</code></td><td>Updated formatToolRow with kaomoji/text mode switching</td><td><span class="c-success">O(1)</span></td></tr>
+    <tr><td><code>ui-tool-renderers.ts</code></td><td>Wired kaomoji glyphs, animation subscriptions, color styling</td><td><span class="c-success">O(1)</span></td></tr>
+    <tr><td><code>ui-tools.ts</code></td><td>Added disposeToolRenderers for session shutdown cleanup</td><td><span class="c-success">O(1)</span></td></tr>
+    <tr><td><code>index.ts</code></td><td>Calls disposeToolRenderers on session_shutdown</td><td><span class="c-success">O(1)</span></td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <strong>Current state:</strong> All files typecheck. 23/23 tests pass. Motion clock has zero idle timers.
+  Animation speed: 800ms per tick. Tool emojis cycle through 2–3 frames.
+  Lumpy <span class="c-pending">(◕‿◕)</span> pulses at 1.2s.
+  <code>PI_ACIDBATH_REDUCED_MOTION=1</code> freezes all animation (handled via CSS in browser, runtime in <code>motion.ts</code>).
+</div>
+
+</div>
+</body>
+</html>
