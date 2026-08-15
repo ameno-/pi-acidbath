@@ -34,6 +34,7 @@
     "+skills/hermes-dispatch/SKILL.md",
     "/home/donatello/dev/lib/skills/coding-gateway-control",
     "/home/donatello/dev/lib/skills/agent-proxy-sync",
-    "/home/donatello/.pi/agent/extensions/pi-messenger/skills/pi-messenger-crew"
+    "/home/donatello/.pi/agent/extensions/pi-messenger/skills/pi-messenger-crew",
+    "/home/donatello/dev/lib/skills/library-access"
   ]
 }

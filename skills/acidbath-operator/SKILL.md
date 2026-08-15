@@ -115,8 +115,10 @@ Do **not** bake the library into Acidbath. Install `ameno-/lib` on the
 machine. Acidbath only ships a **manifest**:
 
 - `config/skill-catalog.json` — default vs on-demand vs archived
-- `/skills list` — show the catalog
+- `/skills list` — Acidbath default + on-demand catalog
+- `/skills scan [query]` — local scan of the installed library map
 - `/skills pull <name>` — print the path and relaunch flag
+- Map: `~/dev/lib/MAP.md`  Scanner: `library-access`
 
 Cloudflare (`wrangler`, `workers-best-practices`, `cloudflare-one`,
 `cloudflare-email-service`) stays on-demand. Enable when the directory
