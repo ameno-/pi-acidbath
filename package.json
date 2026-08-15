@@ -15,7 +15,8 @@
     "themes",
     "config",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "skills"
   ],
   "publishConfig": {
     "access": "public"
@@ -44,6 +45,10 @@
     ],
     "themes": [
       "./themes/*.json"
+    ],
+    "skills": [
+      "./skills/hunk-review",
+      "./skills/acidbath-operator"
     ]
   },
   "peerDependencies": {

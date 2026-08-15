@@ -17,6 +17,12 @@ Standalone Pi package containing UI-focused enhancements extracted from `pi-herd
 - Bundled AGY research tools from [`ameno-/pi-research`](https://github.com/ameno-/pi-research): `agy_web_search` and `agy_research`
 - Explicit [`pi-web-access`](https://github.com/nicobailon/pi-web-access) capability: `web_search`, `fetch_content`, `get_search_content`, and `source_check` for pages, PDFs, video, GitHub, and evidence retrieval
 
+## Skills
+
+Acidbath ships two package skills (`hunk-review`, `acidbath-operator`).
+Shared operator skills live in [`ameno-/lib`](https://github.com/ameno-/lib)
+and are not vendored here. See [`docs/host-skill-bridge.md`](docs/host-skill-bridge.md).
+
 ## Install (local dev)
 
 ```bash

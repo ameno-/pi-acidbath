@@ -1,7 +1,7 @@
 {
   "theme": "acidbath-cyberdyne-teal",
   "packages": [
-    "/Users/ameno/dev/acidbath"
+    "/home/donatello/dev/pi-acidbath"
   ],
   "extensions": [
     "!extensions/**"
@@ -10,6 +10,8 @@
     "!prompts/**"
   ],
   "skills": [
-    "!skills/**"
+    "!skills/**",
+    "/home/donatello/dev/lib/skills/coding-gateway-control",
+    "/home/donatello/dev/lib/skills/agent-proxy-sync"
   ]
 }
