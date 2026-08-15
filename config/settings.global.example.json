@@ -1,7 +1,17 @@
 {
-  "theme": "acidbath-cyberdyne-teal",
+  "theme": "ameno-cyberdyne-teal",
   "packages": [
-    "/home/donatello/dev/pi-acidbath"
+    "/home/donatello/dev/pi-acidbath",
+    "npm:pi-interactive-shell",
+    "npm:pi-web-access",
+    "~/.pi/agent/extensions/pi-messenger",
+    "~/.pi/agent/extensions/session-replay",
+    "~/.pi/agent/extensions/damage-control",
+    "~/.pi/agent/extensions/tool-status",
+    "~/.pi/agent/extensions/handoff.ts",
+    "npm:@juicesharp/rpiv-ask-user-question",
+    "npm:pi-screenshots-picker",
+    "npm:sideshow"
   ],
   "extensions": [
     "!extensions/**"
@@ -11,7 +21,19 @@
   ],
   "skills": [
     "!skills/**",
+    "+skills/safe-bash/SKILL.md",
+    "/home/donatello/.pi/agent/npm/node_modules/pi-interactive-shell/skills/pi-interactive-shell",
+    "+skills/typescript/SKILL.md",
+    "+skills/code-review/SKILL.md",
+    "+skills/plan-check/SKILL.md",
+    "+skills/lockin-workflow/SKILL.md",
+    "+skills/session-completion/SKILL.md",
+    "+skills/gotem/SKILL.md",
+    "+skills/the-library/SKILL.md",
+    "+skills/nomfeed/SKILL.md",
+    "+skills/hermes-dispatch/SKILL.md",
     "/home/donatello/dev/lib/skills/coding-gateway-control",
-    "/home/donatello/dev/lib/skills/agent-proxy-sync"
+    "/home/donatello/dev/lib/skills/agent-proxy-sync",
+    "/home/donatello/.pi/agent/extensions/pi-messenger/skills/pi-messenger-crew"
   ]
 }

@@ -1,52 +1,129 @@
 ---
 name: acidbath-operator
-description: Operate Acidbath as a Pi UI package on top of this machine's coding-gateway control plane. Use when installing Acidbath, choosing which skills load, syncing Pi models, or deciding what belongs in the published package versus lib.
+description: Operate Acidbath as the personal Pi development and delegation system on this machine. Use when installing Acidbath, migrating off the old global Pi session, enabling dormant skills, launching delegates, or deciding what belongs in the package versus lib versus this host.
 ---
 
 # Acidbath operator
 
-Acidbath is a **Pi UI package**. It is not the skill library and it is not
-the live model gateway.
+Acidbath is the **personal development tool** for this machine. The TUI is
+the visible layer. Under it, Acidbath is the composition surface for
+coding, review, research, and bounded delegation.
 
-## Ownership
+It is not "just a UI library." UI is what shipped first. Delegation,
+skill topology, and host integration are the product.
 
-| Layer | Owner | What belongs here |
-| ----- | ----- | ----------------- |
-| UI / TUI | this package (`extensions/`, `themes/`) | header, footer, activity rail, tool rows |
-| Shared skills | `ameno-/lib` (`~/dev/lib/skills`) | hunk-review, coding-gateway-control, agent-proxy-sync, plus the rest of the catalog |
-| Live models | VPS LiteLLM + `agent-proxyctl sync` | catalogs, virtual keys, ChatGPT/Copilot auth |
-| Host-only skills | this machine (`~/.pi/agent/skills`) | nomfeed, gotem, wrangler, email — do not publish |
+## What Acidbath is
 
-Do **not** vendor `~/dev/lib/skills` into the npm package. Do **not**
-symlink skills into `~/.pi/agent/skills` from Acidbath. Package-relative
-`pi.skills` entries are the scoped surface.
+| Layer | Role |
+| ----- | ---- |
+| Presentation | Header, footer, activity rail, built-in tool rows, themes |
+| Research | Bundled `pi-research` (AGY) + explicit `pi-web-access` |
+| Delegation | Herdr / `herdr-subagents` / `pi-messenger` — bounded workers, not nested fan-out |
+| Skills | Curated roster. Package skills + lib operator skills + host skills |
+| Gateway | VPS LiteLLM via `agent-proxyctl sync --client pi-default` |
 
-## First-party skills in this package
+Acidbath does **not** own Herdr PTYs, LiteLLM, or the `lib` catalog. It
+composes them.
 
-- `hunk-review` — live Hunk session control
-- `acidbath-operator` — this file
+## This machine is the home system
 
-Host operator skills stay in lib:
+`donatello-svr` is the infrastructure host. Migrate **to** Acidbath here
+instead of growing the old global Pi session (`~/.pi/agent/skills` dump +
+ad-hoc extensions).
 
-- `coding-gateway-control`
-- `agent-proxy-sync`
+Old session (being replaced as the default):
 
-On a machine that has `~/dev/lib`, load those via the lib tree or a
-generated `dist/pi/skills` view. On a machine that does not, skip them.
+- packages: screenshots, interactive-shell, session-replay, damage-control,
+  tool-status, handoff, pi-messenger, ask-user-question, pi-web-access, sideshow
+- skills actually listed: `safe-bash`, `interactive-shell`, `nomfeed`,
+  `hermes-dispatch`
+- ~23 other skills on disk were dormant (not in the settings roster)
 
-## This host (donatello-svr)
+New default: install this package, keep global discovery blocked, load an
+**explicit** development roster.
 
-1. Install the local package: `pi install /home/donatello/dev/pi-acidbath`
-2. Keep global discovery tight. Prefer package skills over dumping the
-   whole `~/.pi/agent/skills` tree into every session.
-3. After LiteLLM catalog or key changes: `agent-proxyctl sync --client pi-default`
-4. Theme: `acidbath` or `acidbath-cyberdyne-teal` (this host currently uses
-   `ameno-cyberdyne-teal` — either is fine).
+## Install / migrate on this host
+
+```bash
+cp -a ~/.pi/agent/settings.json ~/.pi/agent/settings.json.bak-$(date +%Y%m%d)
+pi install /home/donatello/dev/pi-acidbath
+```
+
+Then keep `skills` as an explicit list (see
+`config/settings.global.example.json`). Do not remove `!skills/**` and
+hope the whole `~/.pi/agent/skills` tree is "the system."
+
+Restart Pi after install. Confirm `/preflight` and that package skills
+`hunk-review` + `acidbath-operator` loaded.
+
+## Default development roster
+
+Always-on for day-to-day coding on this host:
+
+| Skill | Source | Why |
+| ----- | ------ | --- |
+| `acidbath-operator` | this package | how to run the system |
+| `hunk-review` | this package | live diff review via Hunk |
+| `safe-bash` | host | shell discipline |
+| `interactive-shell` | host / npm | long-running / delegated CLIs |
+| `typescript` | host | TS/JS implementation |
+| `code-review` | host | review checklist |
+| `plan-check` | host | plan gate before execution |
+| `lockin-workflow` | host | scout → plan → execute |
+| `session-completion` | host | beads/git handoff |
+| `gotem` | host | save/search personal library |
+| `the-library` | host | runbooks + personal repos |
+| `nomfeed` | host | URL/file → markdown library |
+| `hermes-dispatch` | host | VPS Hermes jobs |
+| `coding-gateway-control` | `~/dev/lib` | LiteLLM / gateway ops |
+| `agent-proxy-sync` | `~/dev/lib` | regenerate Pi/Droids configs |
+| `pi-messenger-crew` | pi-messenger ext | multi-agent crew on this host |
+
+## Dormant on purpose (enable only when the task needs them)
+
+Do not put these in the default roster. They explode context or are
+narrow:
+
+| Skill | When to enable |
+| ----- | -------------- |
+| `bowser` | headless browser / screenshots |
+| `wrangler`, `workers-best-practices`, `cloudflare-*` | CF Workers / One |
+| `email` | Himalaya / Gmail |
+| `minimax-mcp` | MiniMax image/search MCP (extension already exists) |
+| `custom-pi-agent` | writing a new Pi SDK agent |
+| `architectural-decision-records` | new ADR |
+| `puffy-skill-manager` | publishing skills into lib |
+| `agent-metrics`, `pi-pi`, `codex-cli`, `qmd-knowledge` | specialized |
+
+To enable one for a session, add a `+skills/<name>/SKILL.md` line or pass
+`--skill` on the launcher. Do not flip the global blocklist off.
+
+## Delegation rules
+
+- Prefer one visible Acidbath parent + bounded workers (Herdr / messenger).
+- No nested worker fan-out.
+- Explicit worktrees / file reservations.
+- Research stays behind `pi-research` + `pi-web-access` (already in the
+  package). Do not silently grant AGY `command(*)`.
+- Do not load `pi-subagents`, `pi-lens`, or telemetry-bearing Codex
+  packages in the default composition.
+
+## Gateway
+
+Models still come from VPS LiteLLM:
+
+```bash
+agent-proxyctl sync --client pi-default
+```
+
+Then restart Pi. Client name is `pi-default` on this host **and** the Mac.
 
 ## Drift rules
 
-- New reusable skill → author in `~/dev/lib/skills`, register in
-  `registry.yaml` with `pi` in `build_targets` if Pi should see it.
-- New Acidbath UI behavior → this repo only.
-- New gateway/model behavior → LiteLLM + agent-proxy control plane, not
-  Acidbath.
+- New **UI / composition** behavior → this repo.
+- New **reusable skill** → `~/dev/lib/skills` + registry `pi` target.
+- New **host-only** skill → `~/.pi/agent/skills`, then add to the explicit
+  roster only if it should be default.
+- New **gateway/model** behavior → LiteLLM + agent-proxy control plane.
+
+Do not grow the old global Pi session as a second product.

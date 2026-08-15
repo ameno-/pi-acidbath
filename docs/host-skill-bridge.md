@@ -1,6 +1,8 @@
 # Host skill bridge (donatello-svr, 2026-08-14)
 
-Status: **applied locally**. Does not reorganize `ameno-/lib`.
+Status: **applied locally**. Acidbath is the personal development/
+delegation system on donatello-svr, not a UI-only package.
+Does not reorganize `ameno-/lib`.
 
 ## Problem
 
