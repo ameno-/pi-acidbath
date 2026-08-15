@@ -1,6 +1,11 @@
 # acidbath
 
-Standalone Pi package containing UI-focused enhancements extracted from `pi-herdr`:
+Personal Pi **development and delegation system**. The TUI (header, activity
+rail, tool rows, footer, themes) is the presentation layer. Acidbath is the
+composition surface for coding, review, research, and bounded workers on
+this machine.
+
+UI-focused pieces extracted from `pi-herdr`:
 
 - One transient lifecycle activity rail above the editor for listening, reasoning, composing, and tool work
 - Dynamic ten-word session summary pinned to the active Pi header
@@ -17,10 +22,16 @@ Standalone Pi package containing UI-focused enhancements extracted from `pi-herd
 - Bundled AGY research tools from [`ameno-/pi-research`](https://github.com/ameno-/pi-research): `agy_web_search` and `agy_research`
 - Explicit [`pi-web-access`](https://github.com/nicobailon/pi-web-access) capability: `web_search`, `fetch_content`, `get_search_content`, and `source_check` for pages, PDFs, video, GitHub, and evidence retrieval
 
+## Skills
+
+Acidbath ships two package skills (`hunk-review`, `acidbath-operator`).
+Shared operator skills live in [`ameno-/lib`](https://github.com/ameno-/lib)
+and are not vendored here. See [`docs/host-skill-bridge.md`](docs/host-skill-bridge.md).
+
 ## Install (local dev)
 
 ```bash
-pi install /Users/ameno/dev/acidbath
+pi install /home/donatello/dev/pi-acidbath
 ```
 
 This writes the package path into `~/.pi/agent/settings.json` so it loads in all global Pi sessions.
