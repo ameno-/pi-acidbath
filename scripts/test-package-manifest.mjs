@@ -12,6 +12,9 @@ assert.ok(packageJson.pi.extensions.includes("./node_modules/pi-research/extensi
 assert.ok(packageJson.pi.extensions.includes("./node_modules/pi-web-access/index.ts"));
 assert.ok(packageJson.pi.skills.includes("./skills/hunk-review"));
 assert.ok(packageJson.pi.skills.includes("./skills/acidbath-operator"));
+assert.deepEqual(packageJson.pi.skills, ["./skills/hunk-review", "./skills/acidbath-operator"]);
+assert.ok(!packageJson.pi.skills.some((skill) => skill.includes("library-access")));
+assert.ok(!existsSync(new URL("../skills/library-access/SKILL.md", import.meta.url)));
 assert.ok(packageJson.files.includes("skills"));
 assert.ok(existsSync(new URL("../node_modules/pi-web-access/index.ts", import.meta.url)));
 

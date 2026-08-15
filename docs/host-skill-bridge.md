@@ -24,9 +24,21 @@ pointed at `/Users/ameno/...`.
    `hunk-review`, `coding-gateway-control`, `agent-proxy-sync`.
 2. Acidbath ships two **portable** package skills via `pi.skills`:
    `hunk-review`, `acidbath-operator`.
-3. `config/settings.global.example.json` uses this host's paths and
-   optionally loads the two lib operator skills without unblocking the
-   whole global skill directory.
+3. `library-access` stays in `~/dev/lib/skills/library-access`. Do not
+   ship a same-named package skill; Pi skips the package copy on
+   collision. Load the lib path from `settings.skills`.
+4. `config/settings.global.example.json` uses this host's paths and
+   optionally loads the lib operator skills without unblocking the
+   whole global skill directory. Do not also list `npm:pi-web-access`
+   there: Acidbath already bundles it, and a second copy fights
+   `pi-screenshots-picker` for `ctrl+shift+s`.
+5. Host curator shortcut lives in `~/.pi/web-search.json` (see
+   `config/web-search.example.json`): `ctrl+shift+e` reopens the
+   curator so screenshots keep `ctrl+shift+s`.
+6. `firecracker-vm` is parked, not deleted. It intercepted host
+   `bash`/`read`/`write`/`edit` and painted a VM widget. Source stays
+   in `~/dev/firecracker-mcp/pi-ext/firecracker-vm`. Host copy:
+   `~/.pi/agent/extensions-archive/20260815/firecracker-vm`.
 
 ## Not done
 

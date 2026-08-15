@@ -48,8 +48,7 @@
     ],
     "skills": [
       "./skills/hunk-review",
-      "./skills/acidbath-operator",
-      "./skills/library-access"
+      "./skills/acidbath-operator"
     ]
   },
   "peerDependencies": {

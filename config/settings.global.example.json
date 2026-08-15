@@ -3,7 +3,6 @@
   "packages": [
     "/home/donatello/dev/pi-acidbath",
     "npm:pi-interactive-shell",
-    "npm:pi-web-access",
     "~/.pi/agent/extensions/pi-messenger",
     "~/.pi/agent/extensions/session-replay",
     "~/.pi/agent/extensions/damage-control",

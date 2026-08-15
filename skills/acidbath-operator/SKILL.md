@@ -94,6 +94,7 @@ narrow:
 | `architectural-decision-records` | new ADR |
 | `puffy-skill-manager` | publishing skills into lib |
 | `agent-metrics`, `pi-pi`, `codex-cli`, `qmd-knowledge` | specialized |
+| `firecracker-vm` | parked Firecracker tool-relay; restore from `~/.pi/agent/extensions-archive/20260815/firecracker-vm` |
 
 To enable one for a session, add a `+skills/<name>/SKILL.md` line or pass
 `--skill` on the launcher. Do not flip the global blocklist off.
