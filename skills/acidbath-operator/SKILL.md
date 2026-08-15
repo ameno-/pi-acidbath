@@ -122,8 +122,9 @@ machine. Acidbath only ships a **manifest**:
 - Map: `~/dev/lib/MAP.md`  Scanner: `library-access`
 
 Cloudflare (`wrangler`, `workers-best-practices`, `cloudflare-one`,
-`cloudflare-email-service`) stays on-demand. Enable when the directory
-is a Worker / Zero Trust tree, not in every coding session.
+`cloudflare-email-service`) lives in `~/dev/lib/skills` (vendored from
+`github.com/cloudflare/skills`) and stays on-demand. Enable when the
+directory is a Worker / Zero Trust / email tree, not in every session.
 
 Host skills archived 2026-08-15 live in
 `~/.pi/agent/skills-archive/20260815/` (metrics, bowser, email, UX trio,

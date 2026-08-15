@@ -92,26 +92,26 @@
   "on_demand": [
     {
       "name": "wrangler",
-      "source": "host",
-      "path": "~/.pi/agent/skills/wrangler",
+      "source": "lib",
+      "path": "~/dev/lib/skills/wrangler",
       "when": "Cloudflare Workers CLI, wrangler.jsonc, KV/R2/D1/deploy"
     },
     {
       "name": "workers-best-practices",
-      "source": "host",
-      "path": "~/.pi/agent/skills/workers-best-practices",
+      "source": "lib",
+      "path": "~/dev/lib/skills/workers-best-practices",
       "when": "Writing or reviewing Workers code"
     },
     {
       "name": "cloudflare-one",
-      "source": "host",
-      "path": "~/.pi/agent/skills/cloudflare-one",
+      "source": "lib",
+      "path": "~/dev/lib/skills/cloudflare-one",
       "when": "Zero Trust, Access, Tunnel, WARP, Gateway"
     },
     {
       "name": "cloudflare-email-service",
-      "source": "host",
-      "path": "~/.pi/agent/skills/cloudflare-email-service",
+      "source": "lib",
+      "path": "~/dev/lib/skills/cloudflare-email-service",
       "when": "Email Sending / Email Routing on Cloudflare"
     },
     {

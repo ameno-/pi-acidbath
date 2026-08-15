@@ -26,7 +26,11 @@ pointed at `/Users/ameno/...`.
    `hunk-review`, `acidbath-operator`.
 3. `library-access` stays in `~/dev/lib/skills/library-access`. Do not
    ship a same-named package skill; Pi skips the package copy on
-   collision. Load the lib path from `settings.skills`.
+   collision. Load the lib path from `settings.skills`. Cloudflare
+   product skills (`wrangler`, `workers-best-practices`,
+   `cloudflare-one`, `cloudflare-email-service`) are also lib packages
+   now, vendored from `github.com/cloudflare/skills`. Catalog them as
+   on-demand lib paths, never `~/.pi/agent/skills` or `plan-app`.
 4. `config/settings.global.example.json` uses this host's paths and
    optionally loads the lib operator skills without unblocking the
    whole global skill directory. Do not also list `npm:pi-web-access`
