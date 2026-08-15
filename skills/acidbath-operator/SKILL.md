@@ -108,6 +108,25 @@ To enable one for a session, add a `+skills/<name>/SKILL.md` line or pass
 - Do not load `pi-subagents`, `pi-lens`, or telemetry-bearing Codex
   packages in the default composition.
 
+
+## Skill catalog (thin core, pull the rest)
+
+Do **not** bake the library into Acidbath. Install `ameno-/lib` on the
+machine. Acidbath only ships a **manifest**:
+
+- `config/skill-catalog.json` — default vs on-demand vs archived
+- `/skills list` — show the catalog
+- `/skills pull <name>` — print the path and relaunch flag
+
+Cloudflare (`wrangler`, `workers-best-practices`, `cloudflare-one`,
+`cloudflare-email-service`) stays on-demand. Enable when the directory
+is a Worker / Zero Trust tree, not in every coding session.
+
+Host skills archived 2026-08-15 live in
+`~/.pi/agent/skills-archive/20260815/` (metrics, bowser, email, UX trio,
+broken `qmd-knowledge`, etc.). Restore one file if needed; do not dump
+the archive back onto the default path.
+
 ## Gateway
 
 Models still come from VPS LiteLLM:

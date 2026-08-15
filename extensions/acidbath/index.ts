@@ -37,6 +37,7 @@ import {
 } from "./ui-token-context.js";
 import { truncateToWidth } from "./ui-gauge.js";
 import {
+import { expandPath, findEntry, formatCatalog, loadCatalog } from "./skill-catalog.ts";
 	AcidbathWelcome,
 	initialWelcomeState,
 	modelCardFor,
@@ -515,6 +516,51 @@ export default function acidbath(pi: ExtensionAPI): void {
 			if (ctx.mode !== "tui") return;
 			installWelcome(ctx);
 			workingUi(ctx).notify("Acidbath preflight running above the editor.", "info");
+		},
+	});
+
+	pi.registerCommand("skills", {
+		description: "List or pull Acidbath catalog skills. Usage: /skills [list|pull <name>]",
+		handler: async (args, ctx) => {
+			const parts = args.trim().split(/\s+/).filter(Boolean);
+			const action = (parts[0] || "list").toLowerCase();
+			let catalog;
+			try {
+				catalog = loadCatalog();
+			} catch (err) {
+				workingUi(ctx).notify(`Skill catalog unreadable: ${err instanceof Error ? err.message : String(err)}`, "error");
+				return;
+			}
+			if (action === "list" || action === "") {
+				workingUi(ctx).notify(formatCatalog(catalog), "info");
+				return;
+			}
+			if (action === "pull") {
+				const name = parts.slice(1).join(" ");
+				if (!name) {
+					workingUi(ctx).notify("Usage: /skills pull <name>", "error");
+					return;
+				}
+				const entry = findEntry(catalog, name);
+				if (!entry) {
+					workingUi(ctx).notify(`Unknown skill "${name}". Run /skills list.`, "error");
+					return;
+				}
+				const resolved = expandPath(entry.path);
+				workingUi(ctx).notify(
+					[
+						`Pull ${entry.name} [${entry.source}]`,
+						resolved,
+						entry.when ? `when: ${entry.when}` : "",
+						"This session cannot hot-load a new skill file. Relaunch with:",
+						`  pi --skill ${resolved}`,
+						"Or add that path under settings.skills and restart Pi.",
+					].filter(Boolean).join("\n"),
+					"info",
+				);
+				return;
+			}
+			workingUi(ctx).notify("Usage: /skills [list|pull <name>]", "error");
 		},
 	});
 

@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "updated": "2026-08-15",
+  "policy": "Acidbath stays thin. Default skills load with the package. On-demand skills stay in the library/host catalog and are pulled per directory or task.",
+  "default": [
+    {
+      "name": "acidbath-operator",
+      "source": "package",
+      "path": "./skills/acidbath-operator"
+    },
+    {
+      "name": "hunk-review",
+      "source": "package",
+      "path": "./skills/hunk-review"
+    },
+    {
+      "name": "safe-bash",
+      "source": "host",
+      "path": "~/.pi/agent/skills/safe-bash"
+    },
+    {
+      "name": "typescript",
+      "source": "host",
+      "path": "~/.pi/agent/skills/typescript"
+    },
+    {
+      "name": "code-review",
+      "source": "host",
+      "path": "~/.pi/agent/skills/code-review"
+    },
+    {
+      "name": "plan-check",
+      "source": "host",
+      "path": "~/.pi/agent/skills/plan-check"
+    },
+    {
+      "name": "lockin-workflow",
+      "source": "host",
+      "path": "~/.pi/agent/skills/lockin-workflow"
+    },
+    {
+      "name": "session-completion",
+      "source": "host",
+      "path": "~/.pi/agent/skills/session-completion"
+    },
+    {
+      "name": "gotem",
+      "source": "host",
+      "path": "~/.pi/agent/skills/gotem"
+    },
+    {
+      "name": "the-library",
+      "source": "host",
+      "path": "~/.pi/agent/skills/the-library"
+    },
+    {
+      "name": "nomfeed",
+      "source": "host",
+      "path": "~/.pi/agent/skills/nomfeed"
+    },
+    {
+      "name": "hermes-dispatch",
+      "source": "host",
+      "path": "~/.pi/agent/skills/hermes-dispatch"
+    },
+    {
+      "name": "pi-interactive-shell",
+      "source": "npm",
+      "path": "~/.pi/agent/npm/node_modules/pi-interactive-shell/skills/pi-interactive-shell"
+    },
+    {
+      "name": "coding-gateway-control",
+      "source": "lib",
+      "path": "~/dev/lib/skills/coding-gateway-control"
+    },
+    {
+      "name": "agent-proxy-sync",
+      "source": "lib",
+      "path": "~/dev/lib/skills/agent-proxy-sync"
+    },
+    {
+      "name": "pi-messenger-crew",
+      "source": "host-ext",
+      "path": "~/.pi/agent/extensions/pi-messenger/skills/pi-messenger-crew"
+    }
+  ],
+  "on_demand": [
+    {
+      "name": "wrangler",
+      "source": "host",
+      "path": "~/.pi/agent/skills/wrangler",
+      "when": "Cloudflare Workers CLI, wrangler.jsonc, KV/R2/D1/deploy"
+    },
+    {
+      "name": "workers-best-practices",
+      "source": "host",
+      "path": "~/.pi/agent/skills/workers-best-practices",
+      "when": "Writing or reviewing Workers code"
+    },
+    {
+      "name": "cloudflare-one",
+      "source": "host",
+      "path": "~/.pi/agent/skills/cloudflare-one",
+      "when": "Zero Trust, Access, Tunnel, WARP, Gateway"
+    },
+    {
+      "name": "cloudflare-email-service",
+      "source": "host",
+      "path": "~/.pi/agent/skills/cloudflare-email-service",
+      "when": "Email Sending / Email Routing on Cloudflare"
+    },
+    {
+      "name": "agent-browser",
+      "source": "lib",
+      "path": "~/dev/lib/skills/agent-browser",
+      "when": "Headless browser verification"
+    },
+    {
+      "name": "github",
+      "source": "lib",
+      "path": "~/dev/lib/skills/github",
+      "when": "gh / PR / GitHub API workflows"
+    },
+    {
+      "name": "hunk-review",
+      "source": "package",
+      "path": "./skills/hunk-review",
+      "when": "Already default; listed for search"
+    }
+  ],
+  "archived": {
+    "root": "~/.pi/agent/skills-archive/20260815",
+    "names": [
+      "agent-metrics",
+      "architectural-decision-records",
+      "bowser",
+      "codex-cli",
+      "custom-pi-agent",
+      "email",
+      "minimax-mcp",
+      "pi-pi",
+      "puffy-skill-manager",
+      "qmd-knowledge",
+      "ux-cognitive-simplicity",
+      "ux-learnability-confidence",
+      "ux-visual-clarity"
+    ]
+  }
+}
