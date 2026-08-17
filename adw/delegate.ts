@@ -172,7 +172,7 @@ export class DelegateSystem {
       cwd,
       runId,
       phaseId,
-      timeoutMs = 120_000,
+      timeoutMs = 600_000,
       outputSchema,
     } = request;
 
@@ -222,7 +222,25 @@ export class DelegateSystem {
       });
 
       // ── Progress forwarding ─────────────────────────────────────────────
-      const unsubscribe = session.subscribe((event) => {
+      // A provider rejection (bad model, auth, rate limit) surfaces as an
+      // assistant message with stopReason "error" — `prompt()` and
+      // `waitForIdle()` both resolve normally and the final text is empty.
+      // Without capturing it here, a 400 from the gateway is indistinguishable
+      // from a model that simply declined to call submit, which sends you
+      // debugging the prompt when the request never reached a model.
+      // Tracks the LAST assistant message's error state, not a sticky flag. An
+      // errored message is emitted before any auto-retry decision, so a run that
+      // errors once and then recovers emits error-then-stop. Latching on the
+      // first error would report that successful run as a hard provider failure.
+      let providerError: string | undefined;
+      const unsubscribe = session.subscribe((event: any) => {
+        const message = event?.message;
+        if (event?.type === "message_end" && message?.role === "assistant") {
+          providerError =
+            message.stopReason === "error"
+              ? String(message.errorMessage ?? "unknown provider error")
+              : undefined;
+        }
         this.onProgress?.({
           type: "agent_event",
           phaseId,
@@ -298,18 +316,43 @@ export class DelegateSystem {
       const duration = this.now() - startTime;
       const resolvedModelSpec = `${modelSpec.provider}/${modelSpec.modelId}:${thinkingLevel}`;
 
+      // ── Provider rejection ──────────────────────────────────────────────
+      // Checked before every other outcome: nothing downstream is meaningful
+      // when the request never reached a model.
+      if (providerError) {
+        return {
+          status: "fail",
+          summary: `Agent ${agent.name} could not reach its model: ${providerError.slice(0, 400)}`,
+          artifacts: [],
+          notes_for_next_agent:
+            "This is a provider or gateway error, not an agent failure. Check that " +
+            `${modelSpec.provider}/${modelSpec.modelId} is actually served by the gateway.`,
+          agent_name: agent.name,
+          phase_id: phaseId,
+          model_used: resolvedModelSpec,
+          duration_ms: duration,
+          session_id: runId,
+          usage,
+        };
+      }
+
       // ── Structured path ─────────────────────────────────────────────────
       // A phase that declared a schema is only complete when submit was
       // called. Falling back to the final message here would reintroduce the
       // untyped handoff the schema exists to prevent, so this fails instead.
       if (outputSchema) {
         if (!capture.value) {
+          // Carry the final message through. Discarding it here leaves no way to
+          // tell "the model refused the contract" apart from "the model errored
+          // before it could try", which are opposite problems.
+          const said = finalText.trim();
           return {
             status: "fail",
             summary: `Agent ${agent.name} finished without calling submit`,
             artifacts: [],
-            notes_for_next_agent:
-              "The phase declared an output schema but the agent never submitted one.",
+            notes_for_next_agent: said
+              ? `The phase declared an output schema but the agent never submitted one. It said instead: ${said.slice(0, 1500)}`
+              : "The phase declared an output schema but the agent never submitted one, and produced no text at all.",
             agent_name: agent.name,
             phase_id: phaseId,
             model_used: resolvedModelSpec,

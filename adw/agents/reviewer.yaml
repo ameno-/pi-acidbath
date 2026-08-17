@@ -1,10 +1,11 @@
 name: reviewer
-model: copilot-claude-opus-4.8
+model: glm-5p2-fw
 thinking: high
 tools:
   - read
   - grep
   - find
   - ls
+  - bash
 system_prompts:
   - ../prompts/context-budget.md

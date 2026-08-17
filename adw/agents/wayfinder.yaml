@@ -1,5 +1,5 @@
 name: wayfinder
-model: gemini-3.6-flash
+model: ap-copilot/copilot-gemini-3.5-flash
 thinking: high
 tools:
   - read
