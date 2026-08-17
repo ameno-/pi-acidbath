@@ -1,0 +1,9 @@
+name: spec-writer
+model: glm-5p2-fw
+thinking: high
+tools:
+  - read
+  - write
+  - edit
+system_prompts:
+  - ../prompts/context-budget.md

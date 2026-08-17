@@ -9,6 +9,7 @@
     "noEmit": true
   },
   "include": [
-    "extensions/**/*.ts"
+    "extensions/**/*.ts",
+    "adw/**/*.ts"
   ]
 }

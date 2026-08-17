@@ -1,0 +1,7 @@
+name: griller
+model: glm-5p2-fw
+thinking: medium
+tools:
+  - read
+  - bash
+system_prompts: []

@@ -1,0 +1,17 @@
+name: "test-pipeline"
+description: "Test pipeline for dip runtime validation"
+agents:
+  tester:
+    model: gemini-3.6-flash
+    tools: [read, grep, find, ls]
+    system_prompts: [@context-budget.md]
+phases:
+  - id: phase-1
+    kind: agent
+    agent: tester
+    prompt: "Do the thing"
+    halt: true
+  - id: phase-2
+    kind: code
+    command: "echo done"
+    gates: [always_pass]

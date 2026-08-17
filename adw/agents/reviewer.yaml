@@ -1,0 +1,10 @@
+name: reviewer
+model: copilot-claude-opus-4.8
+thinking: high
+tools:
+  - read
+  - grep
+  - find
+  - ls
+system_prompts:
+  - ../prompts/context-budget.md

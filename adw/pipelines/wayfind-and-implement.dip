@@ -1,0 +1,22 @@
+name: "wayfind-and-implement"
+description: "Wayfind a change, halt for review, then implement, test, and review"
+agents:
+phases:
+  - id: wayfind
+    kind: agent
+    agent: wayfinder
+    prompt: "Wayfind {{prompt}}. Identify the smallest change, the files involved, and open questions."
+    halt: true
+  - id: implement
+    kind: agent
+    agent: builder
+    prompt: "Implement this plan: {{wayfind}}"
+  - id: test
+    kind: code
+    command: "npm run test:adw"
+    gates: [always_pass]
+  - id: review
+    kind: agent
+    agent: reviewer
+    prompt: "Review the implementation against this plan: {{wayfind}}"
+    halt: true

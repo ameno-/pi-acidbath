@@ -1,0 +1,8 @@
+name: researcher
+model: gemini-3.6-flash
+thinking: medium
+tools:
+  - read
+  - bash
+system_prompts:
+  - ../prompts/context-budget.md

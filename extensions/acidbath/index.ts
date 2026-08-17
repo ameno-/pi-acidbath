@@ -43,6 +43,8 @@ import {
 	WELCOME_WIDGET_KEY,
 	type PreflightStatus,
 } from "./ui-welcome.js";
+import { describeDipProgress, listPipelines, parseDipArgs, pipelinePath } from "../../adw/command.ts";
+import { createDipRuntime } from "../../adw/create-runtime.ts";
 
 interface WorkingUi {
 	setWorkingVisible?: (visible: boolean) => void;
@@ -98,6 +100,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 	let branchName = "—";
 	let editorWidget: BorderlessEditor | undefined;
 	let activityStatusWidget: AcidbathActivityStatus | undefined;
+	let dipRun: { name: string; status: string; phase?: string } | undefined;
 	let lifecycleState: LifecycleState = { ...INITIAL_LIFECYCLE_STATE };
 	const statusTimings = new StatusTimingRecorder("settled", performance.now());
 	pi.registerEntryRenderer(AGENT_OUTPUT_ENTRY_TYPE, (entry, _options, theme) =>
@@ -459,6 +462,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		dipRun = undefined;
 		const ui = workingUi(ctx);
 		ui.setWorkingVisible?.(true);
 		activityStatusWidget?.dispose();
@@ -515,6 +519,49 @@ export default function acidbath(pi: ExtensionAPI): void {
 			if (ctx.mode !== "tui") return;
 			installWelcome(ctx);
 			workingUi(ctx).notify("Acidbath preflight running above the editor.", "info");
+		},
+	});
+
+	pi.registerCommand("dip", {
+		description: "List, inspect, or run an in-process .dip pipeline.",
+		handler: async (args, ctx) => {
+			const parsed = parseDipArgs(args);
+			if (!parsed.ok) {
+				workingUi(ctx).notify(parsed.error, "error");
+				return;
+			}
+			if (parsed.action === "list") {
+				workingUi(ctx).notify(`Pipelines\n${listPipelines().join("\n")}`, "info");
+				return;
+			}
+			if (parsed.action === "status") {
+				workingUi(ctx).notify(
+					dipRun ? `dip ${dipRun.name}: ${dipRun.status}${dipRun.phase ? ` (${dipRun.phase})` : ""}` : "No dip run in this session.",
+					"info",
+				);
+				return;
+			}
+
+			const path = pipelinePath(parsed.name);
+			dipRun = { name: parsed.name, status: "starting" };
+			recordStatus("working", `dip: ${parsed.name}`);
+			const runtime = createDipRuntime((event) => {
+				if (event.type === "phase_start") dipRun = { name: parsed.name, status: "running", phase: event.id };
+				else if (event.type === "halt") dipRun = { name: parsed.name, status: "halted", phase: event.id };
+				else if (event.type === "dip_end") dipRun = { name: parsed.name, status: event.status, phase: dipRun?.phase };
+				else if (event.type === "dip_error") dipRun = { name: parsed.name, status: "error", phase: dipRun?.phase };
+				const message = describeDipProgress(event);
+				if (message) recordStatus(event.type === "dip_error" ? "error" : "working", message);
+			});
+			try {
+				const pipeline = runtime.loadPipeline(path);
+				const result = await runtime.run(pipeline, parsed.prompt);
+				dipRun = { name: parsed.name, status: result.status, phase: dipRun?.phase };
+				workingUi(ctx).notify(`dip ${parsed.name}: ${result.status}`, result.status === "fail" ? "error" : "info");
+			} catch (error) {
+				dipRun = { name: parsed.name, status: "error", phase: dipRun?.phase };
+				workingUi(ctx).notify(error instanceof Error ? error.message : String(error), "error");
+			}
 		},
 	});
 
