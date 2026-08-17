@@ -1,0 +1,10 @@
+name: "review"
+description: "Review the working-tree diff and report blocking findings only"
+agents:
+phases:
+  - id: review
+    kind: agent
+    agent: reviewer
+    prompt: "Review the working-tree diff for {{prompt}}. Report blocking findings only, each with a file path and line number. A finding is blocking only if it causes wrong behaviour, not if it is a style preference."
+    output: review
+    halt: true
