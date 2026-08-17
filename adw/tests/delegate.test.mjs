@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict";
 import { DelegateSystem, parseModelSpec, resolveTools, SIDESHOW_HANDOFF_PROMPT } from "../delegate.ts";
+import { OUTPUT_SCHEMAS, SUBMIT_INSTRUCTION } from "../envelope.ts";
 
 let passed = 0;
 let failed = 0;
@@ -174,6 +175,198 @@ await test("dispatchPi disposes a session when prompt execution fails", async ()
   assert.equal(result.status, "fail");
   assert.match(result.summary, /fixture failure/);
   assert.ok(disposed && unsubscribed, "session resources must be released on error");
+});
+
+// --- The submit path ---------------------------------------------------------
+// These drive the real `createSubmitTool` through the real dispatch code: the
+// fake session looks up `submit` in the customTools the dispatcher registered
+// and calls it, exactly as a model would. Nothing about the schema path is
+// stubbed except the provider.
+
+/**
+ * A DelegateSystem whose session optionally submits, optionally speaks, and
+ * optionally reports a provider error. Returns the seen dispatch inputs too.
+ */
+function submittingDelegate({ submission, finalText = "", providerError } = {}) {
+  const seen = {};
+  const ds = new DelegateSystem(undefined, {
+    createModelRuntime: async () => ({ getModel: () => ({ provider: "ap-openai", id: "glm-5p2-fw" }) }),
+    createSession: async (options) => {
+      seen.options = options;
+      let listener = () => {};
+      return { session: {
+        subscribe: (fn) => { listener = fn; return () => {}; },
+        prompt: async (value) => {
+          seen.prompt = value;
+          if (providerError) {
+            listener({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: providerError } });
+            return;
+          }
+          if (submission) {
+            const submit = options.customTools.find((tool) => tool.name === "submit");
+            assert.ok(submit, "the dispatcher must have registered a submit tool");
+            await submit.execute("call-1", submission);
+          }
+          listener({ type: "message_end", message: { role: "assistant", stopReason: "stop" } });
+        },
+        waitForIdle: async () => {},
+        getLastAssistantText: () => finalText,
+        getSessionStats: () => ({ tokens: { total: 0, input: 0, output: 0 }, cost: 0 }),
+        dispose: () => {},
+      } };
+    },
+    now: () => 100,
+  });
+  return { ds, seen };
+}
+
+const REVIEW_SCHEMA = OUTPUT_SCHEMAS.review;
+const REVIEW_SUBMISSION = {
+  status: "success",
+  summary: "Reviewed the diff.",
+  artifacts: ["adw/delegate.ts"],
+  notes_for_next_agent: "",
+  verdict: "block",
+  blocking: [{ file: "adw/delegate.ts", line: 298, why: "summary was the whole message" }],
+};
+
+await test("a declared schema registers submit in both customTools and the allowlist", async () => {
+  const { ds, seen } = submittingDelegate({ submission: REVIEW_SUBMISSION });
+  await ds.dispatchPi({ agent: TEST_AGENT, prompt: "review", cwd: process.cwd(), outputSchema: REVIEW_SCHEMA });
+  assert.deepEqual(seen.options.customTools.map((tool) => tool.name), ["read", "grep", "submit"]);
+  assert.deepEqual(seen.options.tools, ["read", "grep", "submit"], "registering is not enough; it must be allowed");
+  const submit = seen.options.customTools.at(-1);
+  assert.equal(submit.parameters, REVIEW_SCHEMA, "submit's parameters are the phase's schema, not a copy");
+});
+
+await test("no schema means no submit tool and the prose handoff instead", async () => {
+  const { ds, seen } = submittingDelegate({ finalText: "prose" });
+  await ds.dispatchPi({ agent: TEST_AGENT, prompt: "review", cwd: process.cwd() });
+  assert.ok(!seen.options.tools.includes("submit"));
+  assert.ok(seen.prompt.includes(SIDESHOW_HANDOFF_PROMPT));
+  assert.ok(!seen.prompt.includes(SUBMIT_INSTRUCTION));
+});
+
+await test("the submit instruction replaces the prose handoff — never both", async () => {
+  const { ds, seen } = submittingDelegate({ submission: REVIEW_SUBMISSION });
+  await ds.dispatchPi({ agent: TEST_AGENT, prompt: "review", cwd: process.cwd(), outputSchema: REVIEW_SCHEMA });
+  assert.ok(seen.prompt.includes(SUBMIT_INSTRUCTION));
+  assert.ok(!seen.prompt.includes(SIDESHOW_HANDOFF_PROMPT), "asking for both reliably gets you both");
+});
+
+await test("submitted fields reach the envelope", async () => {
+  const { ds } = submittingDelegate({ submission: REVIEW_SUBMISSION });
+  const result = await ds.dispatchPi({
+    agent: TEST_AGENT, prompt: "review", cwd: process.cwd(), outputSchema: REVIEW_SCHEMA,
+  });
+  assert.equal(result.status, "success");
+  assert.equal(result.summary, "Reviewed the diff.");
+  assert.equal(result.verdict, "block");
+  assert.deepEqual(result.blocking, REVIEW_SUBMISSION.blocking);
+  assert.deepEqual(result.artifacts, ["adw/delegate.ts"]);
+  assert.equal(result.submit_missing, false);
+});
+
+await test("run metadata is not clobbered by a submission that names the same fields", async () => {
+  const { ds } = submittingDelegate({
+    submission: {
+      ...REVIEW_SUBMISSION,
+      agent_name: "impostor",
+      phase_id: "not-this-phase",
+      model_used: "someone-elses-model",
+      duration_ms: 999_999,
+      session_id: "not-this-run",
+      submit_missing: true,
+    },
+  });
+  const result = await ds.dispatchPi({
+    agent: TEST_AGENT, prompt: "review", cwd: process.cwd(),
+    outputSchema: REVIEW_SCHEMA, runId: "run-1", phaseId: "review",
+  });
+  assert.equal(result.agent_name, "tester");
+  assert.equal(result.phase_id, "review");
+  assert.equal(result.model_used, "ap-openai/gemini-3.6-flash:medium");
+  assert.equal(result.duration_ms, 0);
+  assert.equal(result.session_id, "run-1");
+  assert.equal(result.submit_missing, false);
+});
+
+await test("strict: finishing without submit fails the phase and carries what it said", async () => {
+  const { ds } = submittingDelegate({ finalText: "Here is my review in prose." });
+  const result = await ds.dispatchPi({
+    agent: TEST_AGENT, prompt: "review", cwd: process.cwd(), outputSchema: REVIEW_SCHEMA,
+  });
+  assert.equal(result.status, "fail");
+  assert.match(result.summary, /finished without calling submit/);
+  assert.match(result.notes_for_next_agent, /Here is my review in prose\./);
+  assert.equal(result.submit_missing, true);
+});
+
+await test("permissive: finishing without submit is accepted as unstructured prose", async () => {
+  const { ds } = submittingDelegate({ finalText: "Here is my review in prose." });
+  const result = await ds.dispatchPi({
+    agent: TEST_AGENT, prompt: "review", cwd: process.cwd(),
+    outputSchema: REVIEW_SCHEMA, submitMode: "permissive",
+  });
+  assert.equal(result.status, "success");
+  assert.equal(result.summary, "Here is my review in prose.");
+  assert.equal(result.verdict, undefined, "permissive cannot invent the schema's fields");
+  assert.match(result.notes_for_next_agent, /never called submit/);
+  assert.equal(result.submit_missing, true);
+});
+
+await test("permissive still fails when there is no text to accept", async () => {
+  const { ds } = submittingDelegate({ finalText: "   " });
+  const result = await ds.dispatchPi({
+    agent: TEST_AGENT, prompt: "review", cwd: process.cwd(),
+    outputSchema: REVIEW_SCHEMA, submitMode: "permissive",
+  });
+  assert.equal(result.status, "fail");
+  assert.equal(result.submit_missing, true);
+});
+
+await test("a provider error is reported as a provider error, not as a missing submit", async () => {
+  const { ds } = submittingDelegate({ providerError: "400 model not supported, no fallback group" });
+  const result = await ds.dispatchPi({
+    agent: TEST_AGENT, prompt: "review", cwd: process.cwd(), outputSchema: REVIEW_SCHEMA,
+  });
+  assert.equal(result.status, "fail");
+  assert.match(result.summary, /could not reach its model/);
+  assert.match(result.summary, /no fallback group/);
+  assert.match(result.notes_for_next_agent, /provider or gateway error/);
+  // Deliberately absent: the request never reached a model, so whether the
+  // contract would have been honoured is not a question this run can answer.
+  assert.equal(result.submit_missing, undefined);
+});
+
+await test("a provider error that a later attempt recovers from is not a failure", async () => {
+  // An errored message is emitted before any auto-retry decision. Latching on
+  // the first error would report a recovered run as a hard provider failure.
+  const ds = new DelegateSystem(undefined, {
+    createModelRuntime: async () => ({ getModel: () => ({ provider: "ap-openai", id: "glm-5p2-fw" }) }),
+    createSession: async (options) => {
+      let listener = () => {};
+      return { session: {
+        subscribe: (fn) => { listener = fn; return () => {}; },
+        prompt: async () => {
+          listener({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "transient" } });
+          const submit = options.customTools.find((tool) => tool.name === "submit");
+          await submit.execute("call-1", REVIEW_SUBMISSION);
+          listener({ type: "message_end", message: { role: "assistant", stopReason: "stop" } });
+        },
+        waitForIdle: async () => {},
+        getLastAssistantText: () => "",
+        getSessionStats: () => ({ tokens: { total: 0, input: 0, output: 0 }, cost: 0 }),
+        dispose: () => {},
+      } };
+    },
+    now: () => 100,
+  });
+  const result = await ds.dispatchPi({
+    agent: TEST_AGENT, prompt: "review", cwd: process.cwd(), outputSchema: REVIEW_SCHEMA,
+  });
+  assert.equal(result.status, "success");
+  assert.equal(result.verdict, "block");
 });
 
 // Summary

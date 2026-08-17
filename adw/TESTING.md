@@ -31,7 +31,14 @@ runtime envelope and gate contracts, but its prose must not be snapshot-tested.
   to bd-acid009. Research envelope source artifacts are capped at a bounded
   maximum, preserving order.
 - `delegate.test.mjs`: model parsing, explicit tool allowlists, typed failures,
-  forwarding, and session disposal—all with injected Pi SDK doubles.
+  forwarding, and session disposal—all with injected Pi SDK doubles. Also the
+  submit path: the fake session calls the real `submit` tool the dispatcher
+  registered, so schema registration, field capture, metadata precedence,
+  `strict`/`permissive` handling, and provider-error attribution are exercised
+  against production code rather than a stub.
+- `preflight.test.mjs`: model resolution against a fixture catalog — a missing
+  provider prefix, an unregistered provider, an agent with no model, and how
+  suggestions are ranked. No credentials, no gateway, no `models.json`.
 - `determinism.test.mjs`: repeatability properties of pure runtime behavior.
 - `command.test.mjs`: `/dip` argument parsing and pipeline discovery.
 - `agents.test.mjs`: YAML catalog load, prompt resolution, and catalog/inline merge.

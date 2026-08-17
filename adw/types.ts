@@ -10,6 +10,7 @@ export interface Phase {
   halt?: boolean;          // stop for human validation
   gates?: string[];        // gate names to run after
   output?: string;         // output schema name; see envelope.ts OUTPUT_SCHEMAS
+  submit_mode?: string;    // strict (default) | permissive; see envelope.ts SUBMIT_MODES
 }
 
 // Agent definitions
@@ -40,6 +41,13 @@ export interface Envelope {
   phase_id?: string;
   model_used?: string;
   duration_ms?: number;
+  /**
+   * Set only by a phase that declared an output schema: true when the agent
+   * finished without calling submit. The run log reads this rather than
+   * pattern-matching the summary, which stopped being reliable the moment
+   * permissive mode let a missing submit through as a success.
+   */
+  submit_missing?: boolean;
   usage?: {
     tokens: number;
     cost: number;

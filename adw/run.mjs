@@ -14,17 +14,36 @@
  */
 import { createDipRuntime } from "./create-runtime.ts";
 import { listPipelines, pipelinePath } from "./command.ts";
+import { loadAgentCatalog } from "./agents.ts";
+import { checkAgentModels, defaultModelCatalog, formatModelProblems } from "./preflight.ts";
 
 const args = process.argv.slice(2);
 
 if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-  console.log("usage: run.mjs <pipeline> [prompt...]   |   run.mjs --list");
+  console.log(
+    "usage: run.mjs <pipeline> [prompt...]   |   run.mjs --list   |   run.mjs --preflight",
+  );
   process.exit(args.length === 0 ? 1 : 0);
 }
 
 if (args[0] === "--list") {
   for (const name of listPipelines()) console.log(name);
   process.exit(0);
+}
+
+// A run preflights only the agents its pipeline names. This checks the whole
+// catalog, which is what you want after editing agent files or changing which
+// models the gateway serves.
+if (args[0] === "--preflight") {
+  const agents = Object.values(loadAgentCatalog());
+  const catalog = await defaultModelCatalog();
+  const problems = checkAgentModels(agents, catalog);
+  if (problems.length === 0) {
+    console.log(`${agents.length} agents checked, every model resolves.`);
+    process.exit(0);
+  }
+  console.error(formatModelProblems(problems, catalog));
+  process.exit(1);
 }
 
 const [name, ...promptParts] = args;

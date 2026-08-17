@@ -49,6 +49,7 @@ export function describeDipProgress(event: {
   id?: string;
   status?: string;
   message?: string;
+  error?: string;
   gate?: string;
   passed?: boolean;
 }): string | undefined {
@@ -64,7 +65,11 @@ export function describeDipProgress(event: {
     case "dip_end":
       return `dip ${event.status ?? "done"}`;
     case "dip_error":
-      return `dip error: ${event.message ?? "failed"}`;
+      // The event carries `error`, not `message`. Reading only `message` made
+      // every failure render as the same word; the preflight refusal, which is
+      // this event's first real emitter, is exactly the case where the reason
+      // is the whole point. First line only — the rail is one line tall.
+      return `dip error: ${(event.error ?? event.message ?? "failed").split("\n")[0]}`;
     default:
       return undefined;
   }

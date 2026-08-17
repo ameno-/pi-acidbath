@@ -35,12 +35,14 @@ agents:
     tools: [read, grep, find, ls]
     system_prompts: [@context-budget.md]
   builder:
-    model: glm-5p2-fw
+    model: ap-openai/glm-5p2-fw
     thinking: high
     tools: [read, edit, write, grep, find, ls, bash]
     system_prompts: [@ponytail-ladder.md, @karpathy-guidelines.md]
   reviewer:
-    model: copilot-claude-sonnet-4.6
+    # Always write the provider prefix. A bare spec defaults to ap-openai, which
+    # is how a copilot-* model resolves to a provider that does not serve it.
+    model: ap-copilot/copilot-claude-sonnet-4.6
     tools: [read, grep, find, ls]
     system_prompts: [@context-budget.md]
 
@@ -80,6 +82,37 @@ Pipelines live in `adw/pipelines/`. Shared agent defaults live in
 | `engineer` | Completes, then stops the run for human input |
 
 `halt: true` on any phase also stops the run after that phase succeeds.
+
+### Typed phase output
+
+An `agent` phase may declare `output: <schema>`, naming one of the schemas in
+`adw/envelope.ts` (`generic`, `research`, `brainstorm`, `build`, `review`). The
+agent is then handed one extra tool — `submit` — whose parameters *are* that
+schema, and the phase does not complete until it is called. The prose handoff
+is withheld when a schema is present: asking for a written report *and* a
+structured submission reliably produces both.
+
+`submit_mode:` decides what happens when the agent finishes without submitting:
+
+| Mode | Behaviour |
+|---|---|
+| `strict` (default) | Fail the phase. The final message is carried in `notes_for_next_agent` so a refusal is distinguishable from an error. |
+| `permissive` | Accept the final message as an unstructured summary, with `submit_missing: true` on the envelope. None of the schema's fields will be present. |
+
+An unknown schema name or mode fails that phase before it dispatches, rather
+than silently downgrading it — the parser drops unrecognized keys in silence,
+so a typo would otherwise vanish.
+
+### Model preflight
+
+Before the first phase dispatches, every agent the pipeline names is resolved
+through the same `parseModelSpec` + `ModelRuntime.getModel` pair a dispatch
+uses. An unresolvable model refuses the whole run with the fix named, instead
+of surfacing one phase at a time after work has been paid for. `node
+adw/run.mjs --preflight` runs the same check over the entire agent catalog.
+
+Resolution is not reachability: a model can resolve locally and still be
+rejected by the gateway.
 
 ### Agents
 

@@ -13,7 +13,7 @@ import type {
 import type { TSchema } from "typebox";
 import { mergeAgentCatalog } from "./agents.ts";
 import { verifyGates } from "./gates.ts";
-import { resolveOutputSchema } from "./envelope.ts";
+import { resolveOutputSchema, resolveSubmitMode, type SubmitMode } from "./envelope.ts";
 
 export type ProgressCallback = (event: DipProgressEvent) => void;
 
@@ -27,6 +27,8 @@ export interface AgentPhaseRequest {
   phaseId: string;
   /** Resolved from `phase.output`. Absent means the free-text handoff. */
   outputSchema?: TSchema;
+  /** Resolved from `phase.submit_mode`. Meaningless without `outputSchema`. */
+  submitMode?: SubmitMode;
 }
 
 export type AgentPhaseExecutor = (request: AgentPhaseRequest) => Promise<Envelope>;
@@ -48,6 +50,14 @@ export interface ResearchPhaseRequest {
 
 export type ResearchPhaseExecutor = (request: ResearchPhaseRequest) => Promise<Envelope>;
 
+/**
+ * Checks that every agent a run will use can actually be reached, before the
+ * first phase dispatches. Returns the reason to refuse the run, or undefined to
+ * proceed. The runtime deliberately knows nothing about models or providers —
+ * `preflight.ts` owns that, and supplies this.
+ */
+export type ModelPreflight = (agents: AgentDef[]) => Promise<string | undefined>;
+
 /** R1 contract: research envelopes carry a bounded, ordered source-artifact list. */
 export const RESEARCH_MAX_ARTIFACTS = 20;
 
@@ -63,6 +73,7 @@ export interface DipRuntimeDependencies {
   dispatchAgent?: AgentPhaseExecutor;
   dispatchResearch?: ResearchPhaseExecutor;
   catalog?: Record<string, AgentDef>;
+  checkModels?: ModelPreflight;
 }
 
 export class DipRuntime {
@@ -74,6 +85,7 @@ export class DipRuntime {
   private readonly dispatchAgent?: AgentPhaseExecutor;
   private readonly dispatchResearch?: ResearchPhaseExecutor;
   private readonly catalog: Record<string, AgentDef>;
+  private readonly checkModels?: ModelPreflight;
 
   constructor(onProgress: ProgressCallback = () => {}, dependencies: DipRuntimeDependencies = {}) {
     this.onProgress = onProgress;
@@ -86,6 +98,7 @@ export class DipRuntime {
     this.dispatchAgent = dependencies.dispatchAgent;
     this.dispatchResearch = dependencies.dispatchResearch;
     this.catalog = dependencies.catalog ?? {};
+    this.checkModels = dependencies.checkModels;
   }
 
   /** Load a .dip YAML file from disk. */
@@ -162,6 +175,7 @@ export class DipRuntime {
         else if (key === "halt") phase.halt = value === "true";
         else if (key === "gates") phase.gates = parseInlineList(value);
         else if (key === "output") phase.output = value;
+        else if (key === "submit_mode") phase.submit_mode = value;
       }
     }
 
@@ -179,6 +193,17 @@ export class DipRuntime {
     this.onProgress({ type: "dip_start", name: pipeline.name, run_id: runId });
 
     const resolved = mergeAgentCatalog(pipeline, this.catalog);
+
+    // Preflight before phase 1. An unreachable model used to surface one phase
+    // at a time, after a dispatch had already been paid for and, in the worst
+    // case, after earlier phases had written files.
+    const refusal = await this.preflight(pipeline, resolved.agents, logs);
+    if (refusal) {
+      this.onProgress({ type: "dip_error", error: refusal });
+      this.onProgress({ type: "dip_end", status: "fail", envelopes });
+      return { status: "fail", envelopes, duration_ms: this.now() - startTime, logs };
+    }
+
     const ctx: DipContext = {
       cwd: this.cwd,
       agents: resolved.agents,
@@ -231,6 +256,42 @@ export class DipRuntime {
     return { status, envelopes, duration_ms: this.now() - startTime, logs };
   }
 
+  /**
+   * Check the agents this pipeline names — not the whole catalog, since an
+   * unrelated broken agent file is not this run's problem. A preflight that
+   * cannot itself run is logged and waved through: it is a check, and a broken
+   * check must not be the thing that decides. The dispatch it would have
+   * pre-empted will report the real error with the real context.
+   */
+  private async preflight(
+    pipeline: DipPipeline,
+    agents: Record<string, AgentDef>,
+    logs: string[],
+  ): Promise<string | undefined> {
+    if (!this.checkModels) return undefined;
+
+    const names = new Set(
+      pipeline.phases
+        .filter((phase) => phase.kind === "agent" && phase.agent)
+        .map((phase) => phase.agent as string),
+    );
+    const used = [...names].map((name) => agents[name]).filter(Boolean);
+    if (used.length === 0) return undefined;
+
+    try {
+      const refusal = await this.checkModels(used);
+      if (refusal) logs.push(`[preflight] ${refusal}`);
+      return refusal;
+    } catch (error) {
+      logs.push(
+        `[preflight] skipped — the model check itself failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return undefined;
+    }
+  }
+
   resolveTemplate(template: string, vars: Record<string, string>): string {
     return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`);
   }
@@ -250,12 +311,14 @@ export class DipRuntime {
           return failedEnvelope(phase, "No agent executor configured");
         }
         logs.push(`[${phase.id}] Dispatching agent=${phase.agent}`);
-        // An unknown schema name throws rather than silently downgrading the
-        // phase to an untyped handoff, so a typo in a .dip fails at the phase
-        // it was written on.
+        // An unknown schema name or submit mode throws rather than silently
+        // downgrading the phase to an untyped handoff, so a typo in a .dip
+        // fails at the phase it was written on.
         let outputSchema: TSchema | undefined;
+        let submitMode: SubmitMode;
         try {
           outputSchema = resolveOutputSchema(phase.output);
+          submitMode = resolveSubmitMode(phase.submit_mode);
         } catch (error) {
           return failedEnvelope(
             phase,
@@ -270,6 +333,7 @@ export class DipRuntime {
           runId: ctx.run_id,
           phaseId: phase.id,
           outputSchema,
+          submitMode,
         });
         return { ...envelope, agent_name: envelope.agent_name ?? phase.agent, phase_id: phase.id };
       }

@@ -176,6 +176,33 @@ complete until you do. Put your prose in submit's \`summary\` field rather than
 in a message, and do not restate the submitted content afterwards.
 `.trim();
 
+// ─── Submit modes ────────────────────────────────────────────────────────────
+
+/**
+ * What a phase does when its agent finishes without calling `submit`.
+ *
+ * `strict` fails the phase — the default, because a declared schema that no
+ * one honoured is a broken handoff and the next phase would consume prose it
+ * was not written for. `permissive` accepts the final assistant message as an
+ * unstructured summary, flagged as such. Ported from oh-my-pi's `yield`
+ * (MIT © Mario Zechner and Can Bölük), which is the only part of its recovery
+ * machinery the run log currently justifies: five runs, zero contract refusals.
+ */
+export type SubmitMode = "strict" | "permissive";
+
+export const SUBMIT_MODES: SubmitMode[] = ["strict", "permissive"];
+
+/**
+ * Resolve a `submit_mode:` value. Absent means strict; an unrecognized value
+ * throws, so `permisive` fails the phase it was written on instead of quietly
+ * granting the opposite of what it asked for.
+ */
+export function resolveSubmitMode(value: string | undefined): SubmitMode {
+  if (value === undefined) return "strict";
+  if ((SUBMIT_MODES as string[]).includes(value)) return value as SubmitMode;
+  throw new Error(`Unknown submit_mode: ${value}. Known modes: ${SUBMIT_MODES.join(", ")}`);
+}
+
 /** Mutable sink the submit tool writes into. One per dispatch. */
 export interface SubmitCapture {
   /** The validated arguments, or undefined if submit was never called. */

@@ -320,6 +320,155 @@ phases:
   assert.equal(result.envelopes.never, undefined);
 });
 
+// --- Output schema and submit mode resolution --------------------------------
+
+const TYPED_DIP = (extra) => `
+name: typed
+description: test
+agents:
+  tester:
+    model: ap-openai/glm-5p2-fw
+    tools: [read]
+    system_prompts: []
+phases:
+  - id: review
+    kind: agent
+    agent: tester
+    prompt: "Review"
+${extra}
+  - id: never
+    kind: code
+    command: "echo never"
+`;
+
+await test("a known output schema reaches the executor with the default strict mode", async () => {
+  const requests = [];
+  const runtime = testRuntime(() => {}, {
+    dispatchAgent: async (request) => {
+      requests.push(request);
+      return { status: "success", summary: "done", artifacts: [], notes_for_next_agent: "" };
+    },
+  });
+  await runtime.run(runtime.parseDip(TYPED_DIP("    output: review")), "test");
+  assert.ok(requests[0].outputSchema, "the phase declared a schema; the executor must receive it");
+  assert.equal(requests[0].submitMode, "strict");
+});
+
+await test("submit_mode: permissive is parsed and threaded through", async () => {
+  const requests = [];
+  const runtime = testRuntime(() => {}, {
+    dispatchAgent: async (request) => {
+      requests.push(request);
+      return { status: "success", summary: "done", artifacts: [], notes_for_next_agent: "" };
+    },
+  });
+  const pipeline = runtime.parseDip(TYPED_DIP("    output: review\n    submit_mode: permissive"));
+  assert.equal(pipeline.phases[0].submit_mode, "permissive");
+  await runtime.run(pipeline, "test");
+  assert.equal(requests[0].submitMode, "permissive");
+});
+
+await test("an unknown output schema fails that phase before anything is dispatched", async () => {
+  let dispatched = 0;
+  const runtime = testRuntime(() => {}, {
+    dispatchAgent: async () => {
+      dispatched++;
+      return { status: "success", summary: "done", artifacts: [], notes_for_next_agent: "" };
+    },
+  });
+  const result = await runtime.run(runtime.parseDip(TYPED_DIP("    output: reveiw")), "test");
+  assert.equal(result.status, "fail");
+  assert.match(result.envelopes.review.summary, /Unknown output schema: reveiw/);
+  assert.equal(dispatched, 0, "a typo must not cost a dispatch");
+  assert.equal(result.envelopes.never, undefined);
+});
+
+await test("an unknown submit_mode fails that phase rather than granting the opposite", async () => {
+  let dispatched = 0;
+  const runtime = testRuntime(() => {}, {
+    dispatchAgent: async () => {
+      dispatched++;
+      return { status: "success", summary: "done", artifacts: [], notes_for_next_agent: "" };
+    },
+  });
+  const result = await runtime.run(
+    runtime.parseDip(TYPED_DIP("    output: review\n    submit_mode: permisive")),
+    "test",
+  );
+  assert.equal(result.status, "fail");
+  assert.match(result.envelopes.review.summary, /Unknown submit_mode: permisive/);
+  assert.equal(dispatched, 0);
+});
+
+// --- Model preflight ---------------------------------------------------------
+
+await test("a preflight refusal stops the run before any phase dispatches", async () => {
+  const events = [];
+  let dispatched = 0;
+  const runtime = testRuntime((event) => events.push(event), {
+    checkModels: async () => "reviewer names a model that does not resolve",
+    dispatchAgent: async () => {
+      dispatched++;
+      return { status: "success", summary: "done", artifacts: [], notes_for_next_agent: "" };
+    },
+  });
+  const result = await runtime.run(runtime.parseDip(SAMPLE_DIP), "test");
+  assert.equal(result.status, "fail");
+  assert.equal(dispatched, 0);
+  assert.deepEqual(result.envelopes, {}, "no phase ran, so no phase has an envelope");
+  assert.deepEqual(events.map((event) => event.type), ["dip_start", "dip_error", "dip_end"]);
+  assert.match(events[1].error, /does not resolve/);
+  assert.ok(result.logs.some((line) => line.startsWith("[preflight]")));
+});
+
+await test("the preflight sees only the agents this pipeline names", async () => {
+  let seen;
+  const runtime = testRuntime(() => {}, {
+    catalog: {
+      tester: { name: "tester", model: "ap-openai/glm-5p2-fw", tools: [], system_prompts: [] },
+      unused: { name: "unused", model: "broken", tools: [], system_prompts: [] },
+    },
+    checkModels: async (agents) => { seen = agents.map((a) => a.name); return undefined; },
+  });
+  const result = await runtime.run(runtime.parseDip(SAMPLE_DIP), "test");
+  assert.deepEqual(seen, ["tester"], "an unrelated broken agent file is not this run's problem");
+  assert.equal(result.status, "success");
+});
+
+await test("a preflight that itself fails is logged and waved through", async () => {
+  let dispatched = 0;
+  const runtime = testRuntime(() => {}, {
+    checkModels: async () => { throw new Error("models.json unreadable"); },
+    dispatchAgent: async () => {
+      dispatched++;
+      return { status: "success", summary: "done", artifacts: [], notes_for_next_agent: "" };
+    },
+  });
+  const result = await runtime.run(runtime.parseDip(SAMPLE_DIP), "test");
+  assert.equal(result.status, "success", "a broken check must not be the thing that decides");
+  assert.equal(dispatched, 1);
+  assert.ok(result.logs.some((line) => /\[preflight\] skipped .*models\.json unreadable/.test(line)));
+});
+
+await test("a pipeline with no agent phases skips the preflight entirely", async () => {
+  let called = 0;
+  const runtime = testRuntime(() => {}, { checkModels: async () => { called++; return "no"; } });
+  const result = await runtime.run(
+    runtime.parseDip(`
+name: code-only
+description: test
+agents:
+phases:
+  - id: build
+    kind: code
+    command: "echo ok"
+`),
+    "test",
+  );
+  assert.equal(called, 0);
+  assert.equal(result.status, "success");
+});
+
 await test("template resolution leaves unknown values intact", () => {
   const runtime = testRuntime();
   assert.equal(runtime.resolveTemplate("{{prompt}} / {{missing}}", { prompt: "hello" }), "hello / {{missing}}");

@@ -60,5 +60,14 @@ await test("describeDipProgress maps lifecycle events without inventing animatio
   assert.equal(describeDipProgress({ type: "phase_progress" }), undefined);
 });
 
+await test("a dip_error renders its reason, not the word 'failed'", () => {
+  // The event's field is `error`; a preflight refusal is multi-line.
+  assert.equal(
+    describeDipProgress({ type: "dip_error", error: "2 agents named a model that does not resolve\n\n  reviewer: ..." }),
+    "dip error: 2 agents named a model that does not resolve",
+  );
+  assert.equal(describeDipProgress({ type: "dip_error" }), "dip error: failed");
+});
+
 console.log(`\nResults: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

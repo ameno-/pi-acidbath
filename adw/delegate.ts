@@ -18,7 +18,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import type { AgentDef, Envelope } from "./types.ts";
-import { createSubmitTool, SUBMIT_INSTRUCTION, type SubmitCapture } from "./envelope.ts";
+import {
+  createSubmitTool,
+  SUBMIT_INSTRUCTION,
+  type SubmitCapture,
+  type SubmitMode,
+} from "./envelope.ts";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -36,6 +41,11 @@ export interface PiDispatchRequest {
    * message becomes the summary — the original free-text behaviour.
    */
   outputSchema?: TSchema;
+  /**
+   * What to do when a schema-bearing phase finishes without a submit.
+   * Defaults to strict. Ignored when `outputSchema` is absent.
+   */
+  submitMode?: SubmitMode;
 }
 
 export interface PiDispatchResult extends Envelope {
@@ -174,6 +184,7 @@ export class DelegateSystem {
       phaseId,
       timeoutMs = 600_000,
       outputSchema,
+      submitMode = "strict",
     } = request;
 
     const startTime = this.now();
@@ -346,6 +357,28 @@ export class DelegateSystem {
           // tell "the model refused the contract" apart from "the model errored
           // before it could try", which are opposite problems.
           const said = finalText.trim();
+
+          // Permissive takes the prose and marks it unstructured. It cannot
+          // invent the fields, so a phase whose successor reads them will still
+          // break — one phase later, with the text in hand to see why.
+          if (submitMode === "permissive" && said) {
+            return {
+              status: "success",
+              summary: said,
+              artifacts: [],
+              notes_for_next_agent:
+                "Accepted in permissive mode: the agent never called submit, so this " +
+                "summary is unstructured prose and none of the schema's fields are present.",
+              agent_name: agent.name,
+              phase_id: phaseId,
+              model_used: resolvedModelSpec,
+              duration_ms: duration,
+              submit_missing: true,
+              session_id: runId,
+              usage,
+            };
+          }
+
           return {
             status: "fail",
             summary: `Agent ${agent.name} finished without calling submit`,
@@ -357,6 +390,7 @@ export class DelegateSystem {
             phase_id: phaseId,
             model_used: resolvedModelSpec,
             duration_ms: duration,
+            submit_missing: true,
             session_id: runId,
             usage,
           };
@@ -369,6 +403,7 @@ export class DelegateSystem {
           phase_id: phaseId,
           model_used: resolvedModelSpec,
           duration_ms: duration,
+          submit_missing: false,
           session_id: runId,
           usage,
         };
