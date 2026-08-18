@@ -43,8 +43,7 @@ import {
 	WELCOME_WIDGET_KEY,
 	type PreflightStatus,
 } from "./ui-welcome.js";
-import { describeDipProgress, listPipelines, parseDipArgs, pipelinePath } from "../../adw/command.ts";
-import { createDipRuntime } from "../../adw/create-runtime.ts";
+import { PIPELINES, parseDipArgs, runDipPipeline } from "../../adw/command.ts";
 
 interface WorkingUi {
 	setWorkingVisible?: (visible: boolean) => void;
@@ -523,7 +522,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("dip", {
-		description: "List, inspect, or run an in-process .dip pipeline.",
+		description: "List or run a pipeline.",
 		handler: async (args, ctx) => {
 			const parsed = parseDipArgs(args);
 			if (!parsed.ok) {
@@ -531,7 +530,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 				return;
 			}
 			if (parsed.action === "list") {
-				workingUi(ctx).notify(`Pipelines\n${listPipelines().join("\n")}`, "info");
+				workingUi(ctx).notify(`Pipelines\n${PIPELINES.join("\n")}`, "info");
 				return;
 			}
 			if (parsed.action === "status") {
@@ -542,20 +541,13 @@ export default function acidbath(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const path = pipelinePath(parsed.name);
 			dipRun = { name: parsed.name, status: "starting" };
 			recordStatus("working", `dip: ${parsed.name}`);
-			const runtime = createDipRuntime((event) => {
-				if (event.type === "phase_start") dipRun = { name: parsed.name, status: "running", phase: event.id };
-				else if (event.type === "halt") dipRun = { name: parsed.name, status: "halted", phase: event.id };
-				else if (event.type === "dip_end") dipRun = { name: parsed.name, status: event.status, phase: dipRun?.phase };
-				else if (event.type === "dip_error") dipRun = { name: parsed.name, status: "error", phase: dipRun?.phase };
-				const message = describeDipProgress(event);
-				if (message) recordStatus(event.type === "dip_error" ? "error" : "working", message);
-			});
 			try {
-				const pipeline = runtime.loadPipeline(path);
-				const result = await runtime.run(pipeline, parsed.prompt);
+				const result = await runDipPipeline(parsed.name, parsed.prompt, (message) => {
+					dipRun = { name: parsed.name, status: "running", phase: message };
+					recordStatus("working", `dip: ${message}`);
+				});
 				dipRun = { name: parsed.name, status: result.status, phase: dipRun?.phase };
 				workingUi(ctx).notify(`dip ${parsed.name}: ${result.status}`, result.status === "fail" ? "error" : "info");
 			} catch (error) {

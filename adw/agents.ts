@@ -1,106 +1,65 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+/**
+ * adw/agents.ts — the agent roster, as constants.
+ *
+ * This was a 106-line hand-rolled YAML parser reading eight `.yaml` files, of
+ * which the run log shows five were never dispatched once. The parser existed
+ * so agents could be edited without touching code; nobody ever did, and it
+ * cost a whole class of silent failure — an unknown key parsed to nothing.
+ *
+ * Prompt files are still files: they are prose, they are long, and they are the
+ * one part genuinely worth editing without a rebuild.
+ */
+
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentDef, DipPipeline } from "./types.ts";
+import type { AgentDef } from "./types.ts";
 
-export function defaultAgentsDir(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "agents");
-}
+const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
 
-/** Load every `*.yaml` agent file from a directory into a name → definition map. */
-export function loadAgentCatalog(dir: string = defaultAgentsDir()): Record<string, AgentDef> {
-  const catalog: Record<string, AgentDef> = {};
-  for (const entry of readdirSync(dir).sort()) {
-    if (!entry.endsWith(".yaml") && !entry.endsWith(".yml")) continue;
-    const agent = parseAgentYaml(readFileSync(join(dir, entry), "utf-8"), dir);
-    if (agent.name) catalog[agent.name] = agent;
+/** Read a prompt file; fall back to the name so a missing file is visible, not fatal. */
+export function prompt(file: string): string {
+  try {
+    return readFileSync(join(PROMPTS_DIR, file), "utf-8");
+  } catch {
+    return `(missing prompt: ${file})`;
   }
-  return catalog;
 }
 
 /**
- * Catalog agents are the defaults. A `.dip` may omit `agents`, stub a name, or
- * override individual fields. Empty inline fields do not wipe catalog values.
+ * Every model spec carries its provider prefix. `parseModelSpec` defaults to
+ * `ap-openai`, so a bare `copilot-*` name resolves to the wrong provider and
+ * 400s — the single most expensive mistake in this project's run log.
  */
-export function mergeAgentCatalog(
-  pipeline: DipPipeline,
-  catalog: Record<string, AgentDef>,
-): DipPipeline {
-  const agents: Record<string, AgentDef> = { ...catalog };
-  for (const [name, inline] of Object.entries(pipeline.agents)) {
-    const base = catalog[name] ?? { name, model: "", tools: [], system_prompts: [] };
-    agents[name] = {
-      ...base,
-      name,
-      ...(inline.model ? { model: inline.model } : {}),
-      ...(inline.thinking ? { thinking: inline.thinking } : {}),
-      ...(inline.tools.length > 0 ? { tools: inline.tools } : {}),
-      ...(inline.system_prompts.length > 0 ? { system_prompts: inline.system_prompts } : {}),
-      ...(inline.writes ? { writes: inline.writes } : {}),
-    };
-  }
-  return { ...pipeline, agents };
-}
+export const REVIEWER: AgentDef = {
+  name: "reviewer",
+  model: "ap-openai/glm-5p2-fw",
+  thinking: "high",
+  tools: ["read", "grep", "find", "ls", "bash"],
+  system_prompts: [prompt("context-budget.md")],
+};
 
-export function parseAgentYaml(content: string, sourceDir: string): AgentDef {
-  const agent: AgentDef = { name: "", model: "", tools: [], system_prompts: [] };
-  let listKey: "tools" | "system_prompts" | "writes" | null = null;
+/** Brainstorming reads to stay grounded, and writes nothing: choosing is not doing. */
+export const THINKER: AgentDef = {
+  name: "thinker",
+  model: "ap-openai/glm-5p2-fw",
+  thinking: "high",
+  tools: ["read", "grep", "find", "ls"],
+  system_prompts: [prompt("context-budget.md")],
+};
 
-  for (const raw of content.split("\n")) {
-    const trimmed = raw.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
+/**
+ * The research capability's model. Its tools are forced at the dispatch site
+ * (see research.ts), not read from here — this decides which model runs and
+ * nothing about what it is allowed to do.
+ */
+export const SCOUT: AgentDef = {
+  name: "scout",
+  model: "ap-openai/glm-5p2-fw",
+  thinking: "medium",
+  tools: [],
+  system_prompts: [],
+};
 
-    if (trimmed.startsWith("- ") && listKey) {
-      pushListValue(agent, listKey, trimmed.slice(2).trim(), sourceDir);
-      continue;
-    }
-
-    const colon = trimmed.indexOf(":");
-    if (colon < 0) continue;
-    const key = trimmed.slice(0, colon).trim();
-    const value = trimmed.slice(colon + 1).trim().replace(/^["']|["']$/g, "");
-
-    if (key === "name") agent.name = value;
-    else if (key === "model") agent.model = value;
-    else if (key === "thinking") agent.thinking = value;
-    else if (key === "tools" || key === "system_prompts" || key === "writes") {
-      listKey = key;
-      if (value) {
-        for (const item of parseInlineList(value)) pushListValue(agent, key, item, sourceDir);
-        listKey = null;
-      }
-    } else {
-      listKey = null;
-    }
-  }
-
-  return agent;
-}
-
-function pushListValue(
-  agent: AgentDef,
-  key: "tools" | "system_prompts" | "writes",
-  item: string,
-  sourceDir: string,
-): void {
-  if (key === "tools") agent.tools.push(item);
-  else if (key === "writes") (agent.writes ??= []).push(item);
-  else agent.system_prompts.push(resolvePrompt(item, sourceDir));
-}
-
-function resolvePrompt(item: string, sourceDir: string): string {
-  const relative = item.replace(/^@/, "");
-  try {
-    return readFileSync(resolve(sourceDir, relative), "utf-8");
-  } catch {
-    return item;
-  }
-}
-
-function parseInlineList(value: string): string[] {
-  return value
-    .replace(/^\[|\]$/g, "")
-    .split(",")
-    .map((item) => item.trim().replace(/^["']|["']$/g, ""))
-    .filter(Boolean);
-}
+/** Everything the preflight should check. */
+export const ALL_AGENTS: AgentDef[] = [REVIEWER, THINKER, SCOUT];

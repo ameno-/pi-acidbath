@@ -1,76 +1,50 @@
-import { readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+/**
+ * adw/command.ts — the `/dip` slash command's thin adapter.
+ *
+ * Argument parsing and pipeline lookup, so the TUI extension does not import
+ * the library's internals. Progress arrives as plain strings; the extension
+ * never sees an event union it has to keep in sync.
+ */
 
-export type DipCommand =
+import type { PipelineResult } from "./pipeline.ts";
+
+export const PIPELINES = ["review", "research"] as const;
+export type PipelineName = (typeof PIPELINES)[number];
+
+export type DipArgs =
   | { ok: true; action: "list" }
   | { ok: true; action: "status" }
-  | { ok: true; action: "run"; name: string; prompt: string }
+  | { ok: true; action: "run"; name: PipelineName; prompt: string }
   | { ok: false; error: string };
 
-export function defaultPipelinesDir(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "pipelines");
-}
+export function parseDipArgs(args: string): DipArgs {
+  const trimmed = args.trim();
+  if (!trimmed || trimmed === "list") return { ok: true, action: "list" };
+  if (trimmed === "status") return { ok: true, action: "status" };
 
-export function parseDipArgs(raw: string): DipCommand {
-  const tokens = raw.trim().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) {
-    return { ok: false, error: "Usage: /dip list | /dip status | /dip run <name> [prompt]" };
+  const [name, ...rest] = trimmed.split(/\s+/);
+  if (!(PIPELINES as readonly string[]).includes(name)) {
+    return { ok: false, error: `Unknown pipeline: ${name}. Known: ${PIPELINES.join(", ")}` };
   }
-
-  const [action, name, ...rest] = tokens;
-  if (action === "list" || action === "status") {
-    if (name) return { ok: false, error: `Usage: /dip ${action}` };
-    return { ok: true, action };
-  }
-  if (action === "run") {
-    if (!name) return { ok: false, error: "Usage: /dip run <name> [prompt]" };
-    return { ok: true, action: "run", name, prompt: rest.join(" ") };
-  }
-  return { ok: false, error: `Unknown /dip action: ${action}` };
+  const prompt = rest.join(" ");
+  if (!prompt) return { ok: false, error: `${name} needs an input: /dip ${name} <what>` };
+  return { ok: true, action: "run", name: name as PipelineName, prompt };
 }
 
-export function listPipelines(dir: string = defaultPipelinesDir()): string[] {
-  return readdirSync(dir)
-    .filter((entry) => entry.endsWith(".dip"))
-    .map((entry) => entry.replace(/\.dip$/, ""))
-    .sort();
-}
-
-export function pipelinePath(name: string, dir: string = defaultPipelinesDir()): string {
-  const basename = name.endsWith(".dip") ? name : `${name}.dip`;
-  return join(dir, basename);
-}
-
-/** Presentation-only mapping from runtime events onto the activity rail. */
-export function describeDipProgress(event: {
-  type: string;
-  name?: string;
-  id?: string;
-  status?: string;
-  message?: string;
-  error?: string;
-  gate?: string;
-  passed?: boolean;
-}): string | undefined {
-  switch (event.type) {
-    case "dip_start":
-      return `dip: ${event.name ?? "pipeline"}`;
-    case "phase_start":
-      return `dip: ${event.id ?? "phase"}`;
-    case "gate_check":
-      return `dip: ${event.gate ?? "gate"} ${event.passed === false ? "fail" : "pass"}`;
-    case "halt":
-      return `dip halt: ${event.id ?? event.message ?? "review"}`;
-    case "dip_end":
-      return `dip ${event.status ?? "done"}`;
-    case "dip_error":
-      // The event carries `error`, not `message`. Reading only `message` made
-      // every failure render as the same word; the preflight refusal, which is
-      // this event's first real emitter, is exactly the case where the reason
-      // is the whole point. First line only — the rail is one line tall.
-      return `dip error: ${(event.error ?? event.message ?? "failed").split("\n")[0]}`;
-    default:
-      return undefined;
+/** Run a pipeline by name, forwarding progress lines to the caller. */
+export async function runDipPipeline(
+  name: PipelineName,
+  input: string,
+  onProgress: (message: string) => void = () => {},
+): Promise<PipelineResult<{ status: "success" | "fail" | "halted" }>> {
+  const module = name === "review"
+    ? await import("./pipelines/review.ts")
+    : await import("./pipelines/research.ts");
+  const original = console.error;
+  console.error = (...parts: unknown[]) => onProgress(parts.map(String).join(" ").trim());
+  try {
+    return await module.run(input);
+  } finally {
+    console.error = original;
   }
 }

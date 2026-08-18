@@ -16,7 +16,6 @@
 import { join } from "node:path";
 import { ModelRuntime, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { AgentDef } from "./types.ts";
-import type { ModelPreflight } from "./runtime.ts";
 import { parseModelSpec } from "./delegate.ts";
 
 /**
@@ -176,7 +175,7 @@ export async function defaultModelCatalog(): Promise<ModelCatalog> {
  * to proceed — the shape `DipRuntime` consumes, which keeps the runtime itself
  * ignorant of models, providers, and this SDK.
  */
-export const livePreflight: ModelPreflight = async (agents) => {
+export const livePreflight = async (agents: AgentDef[]): Promise<string | undefined> => {
   const catalog = await defaultModelCatalog();
   const problems = checkAgentModels(agents, catalog);
   return problems.length === 0 ? undefined : formatModelProblems(problems, catalog);

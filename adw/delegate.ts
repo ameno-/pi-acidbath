@@ -140,6 +140,27 @@ export function resolveTools(toolNames: string[], cwd: string): ToolDefinition[]
     .filter((t): t is ToolDefinition => t !== undefined);
 }
 
+/**
+ * Which of the requested tool names the session did not actually activate.
+ *
+ * Returns nothing when the session cannot report its active tools: a check
+ * that cannot run must not be the thing that fails the dispatch. The
+ * dispatch it would have pre-empted reports the real error with real context.
+ */
+function missingToolNames(session: unknown, requested: string[]): string[] {
+  const reader = (session as { getActiveToolNames?: () => string[] })?.getActiveToolNames;
+  if (typeof reader !== "function") return [];
+  let names: unknown;
+  try {
+    names = reader.call(session);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(names)) return [];
+  const active = new Set(names);
+  return requested.filter((name) => !active.has(name));
+}
+
 // ─── DelegateSystem ──────────────────────────────────────────────────────────
 
 export interface DelegateDependencies {
@@ -260,6 +281,31 @@ export class DelegateSystem {
       });
 
       try {
+        // ── Tool allowlist check ──────────────────────────────────────────
+        // `setActiveToolsByName` documents that "unknown tool names are
+        // ignored", so a tool that does not exist here is dropped in silence
+        // and the agent simply behaves as though it were never asked to use
+        // it. That is survivable for a spare `grep`, and fatal for the one
+        // tool a phase exists to call: extension tools like `agy_research`
+        // are discovered from `cwd`, so the same pipeline run from another
+        // repo loses them without a word. Fail here, naming the tool.
+        const missingTools = missingToolNames(session, toolNames);
+        if (missingTools.length > 0) {
+          return {
+            status: "fail",
+            summary: `Agent ${agent.name} requested tools that do not exist here: ${missingTools.join(", ")}`,
+            artifacts: [],
+            notes_for_next_agent:
+              `Unknown tool names are ignored rather than reported, so this phase would have run ` +
+              `without ${missingTools.join(", ")}. Check the spelling, and — for extension tools — ` +
+              `that the extension is discoverable from ${cwd}.`,
+            agent_name: agent.name,
+            phase_id: phaseId,
+            duration_ms: this.now() - startTime,
+            session_id: runId,
+          };
+        }
+
         // ── Timeout wrapper ───────────────────────────────────────────────
         const timeoutController = new AbortController();
       const timeoutHandle = setTimeout(

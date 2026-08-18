@@ -369,6 +369,80 @@ await test("a provider error that a later attempt recovers from is not a failure
   assert.equal(result.verdict, "block");
 });
 
+// --- The tool allowlist ------------------------------------------------------
+// Pi ignores unknown tool names rather than reporting them, so a misspelled or
+// undiscoverable tool used to mean the agent quietly ran without it. Extension
+// tools are discovered from `cwd`, which makes this the failure mode a research
+// phase run from the wrong directory would hit.
+
+/**
+ * A DelegateSystem whose session activates only `activates`. Passing undefined
+ * omits `getActiveToolNames` entirely, modelling an SDK that cannot report it.
+ */
+function toolCheckingDelegate(activates) {
+  let disposed = false;
+  const ds = new DelegateSystem(undefined, {
+    createModelRuntime: async () => ({ getModel: () => ({ provider: "ap-openai", id: "glm-5p2-fw" }) }),
+    createSession: async () => ({ session: {
+      subscribe: () => () => {},
+      prompt: async () => {},
+      waitForIdle: async () => {},
+      ...(activates ? { getActiveToolNames: () => activates } : {}),
+      getLastAssistantText: () => "fixture response",
+      getSessionStats: () => ({ tokens: { total: 0, input: 0, output: 0 }, cost: 0 }),
+      dispose: () => { disposed = true; },
+    } }),
+    now: () => 100,
+  });
+  return { ds, disposed: () => disposed };
+}
+
+await test("a tool that did not activate fails the dispatch instead of running without it", async () => {
+  const { ds, disposed } = toolCheckingDelegate(["read"]);
+  const result = await ds.dispatchPi({
+    agent: { name: "scout", model: "glm-5p2-fw", tools: ["read", "agy_research"], system_prompts: [] },
+    prompt: "research",
+    cwd: "/elsewhere",
+    phaseId: "gather",
+  });
+  assert.equal(result.status, "fail");
+  assert.match(result.summary, /agy_research/);
+  assert.match(result.notes_for_next_agent, /\/elsewhere/, "the note must name the cwd that was searched");
+  assert.ok(disposed(), "the session must still be released");
+});
+
+await test("the submit tool is checked too, since a dropped submit cannot be recovered from", async () => {
+  const { ds } = toolCheckingDelegate(["read"]);
+  const result = await ds.dispatchPi({
+    agent: { name: "tester", model: "glm-5p2-fw", tools: ["read"], system_prompts: [] },
+    prompt: "task",
+    cwd: process.cwd(),
+    outputSchema: OUTPUT_SCHEMAS.generic,
+  });
+  assert.equal(result.status, "fail");
+  assert.match(result.summary, /submit/);
+});
+
+await test("a dispatch whose tools all activate proceeds normally", async () => {
+  const { ds } = toolCheckingDelegate(["read", "agy_research"]);
+  const result = await ds.dispatchPi({
+    agent: { name: "scout", model: "glm-5p2-fw", tools: ["read", "agy_research"], system_prompts: [] },
+    prompt: "research",
+    cwd: process.cwd(),
+  });
+  assert.equal(result.status, "success");
+  assert.equal(result.summary, "fixture response");
+});
+
+await test("a session that cannot report its active tools is waved through, not failed", async () => {
+  // A check that cannot run must never be the thing that decides.
+  const { ds } = toolCheckingDelegate(undefined);
+  const result = await ds.dispatchPi({
+    agent: TEST_AGENT, prompt: "task", cwd: process.cwd(),
+  });
+  assert.equal(result.status, "success");
+});
+
 // Summary
 console.log("");
 console.log(`Results: ${passed} passed, ${failed} failed`);
