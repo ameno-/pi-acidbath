@@ -66,18 +66,26 @@ export type DelegateProgressCallback = (event: {
 }) => void;
 
 /**
- * The parent, not a worker, owns Sideshow publication. This gives every
- * delegate result a small, structured handoff that an orchestrator can render
- * into its task card without exposing private reasoning or raw transcripts.
+ * The parent, not a worker, owns publication to the three surfaces (Sideshow
+ * live board, Notion design space, Linear ledger). This gives every delegate
+ * result a small, structured handoff that an orchestrator can route to the
+ * right surfaces without exposing private reasoning or raw transcripts.
  */
-export const SIDESHOW_HANDOFF_PROMPT = `
-End your report with a compact "Board handoff" section:
+export const SURFACE_HANDOFF_PROMPT = `
+End your report with a compact "Surface handoff" section:
 - Status: success, failure, or blocked.
 - Evidence: the most relevant artifact paths, findings, or validation fact.
+- Linear: the issue key you advanced or created (e.g. MIGHT-123), or "none".
+- Notion: the design-space page id or URL you published or updated, or "none".
 - Risk/blocker: only if one remains.
 - Next action: one concrete recommendation.
 Do not include private chain-of-thought or an unbounded tool transcript.
+Workers do not publish to Sideshow, Notion, or Linear directly; the parent
+routes this handoff to the surfaces.
 `.trim();
+
+/** @deprecated Use SURFACE_HANDOFF_PROMPT. Kept for existing imports. */
+export const SIDESHOW_HANDOFF_PROMPT = SURFACE_HANDOFF_PROMPT;
 
 // ─── Parsed model spec ───────────────────────────────────────────────────────
 
@@ -321,7 +329,7 @@ export class DelegateSystem {
         // both, which is the duplication the schema exists to remove.
         const fullPrompt = [
           ...(request.systemPromptOverrides ?? agent.system_prompts ?? []),
-          outputSchema ? SUBMIT_INSTRUCTION : SIDESHOW_HANDOFF_PROMPT,
+          outputSchema ? SUBMIT_INSTRUCTION : SURFACE_HANDOFF_PROMPT,
           prompt,
         ]
           .filter(Boolean)
