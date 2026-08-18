@@ -1,0 +1,6 @@
+# Linear CLI configuration for the acidbath repo.
+# Discovery: ./.linear.toml wins for any `linear` command run in this tree.
+workspace = "acids"
+team_id = "MIGHT"
+issue_sort = "priority"
+vcs = "git"

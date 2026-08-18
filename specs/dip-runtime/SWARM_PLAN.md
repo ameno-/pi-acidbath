@@ -2,7 +2,7 @@
 
 **Status:** Waves 1–3 command surface complete. The next increment is one research-ADW vertical slice; ENG-74 remains open for the later opt-in live smoke.
 **Updated:** 2026-08-14
-**Tracker:** Plane `ENG` is authoritative. Local Beads clones execution state.
+**Tracker:** Linear (workspace `acids`, team `MIGHT`) is authoritative. Local Beads clones execution state. Migrated from Plane on 2026-08-17; see `.beads/plane-linear-map.json` (Plane `ENG-68`…`ENG-74` → `MIGHT-170`…`MIGHT-176`).
 
 ---
 
@@ -93,7 +93,7 @@ it does **not** begin generic halt/resume or a multi-agent workflow redesign.
   gate, envelope shape, sources, and halt.
 - Add an opt-in live AGY smoke only after R1/R2 pass. It asserts contracts,
   not generated prose.
-- ENG-74 / bd-acid007 remains the authoritative Plane live-validation ticket;
+- MIGHT-170 / bd-acid007 remains the authoritative live-validation ticket;
   the local R3 bead is its scoped prerequisite and evidence trail.
 
 ### Deferred deliberately
@@ -116,7 +116,7 @@ it does **not** begin generic halt/resume or a multi-agent workflow redesign.
 
 ## Local Beads
 
-Use `.beads/beads.py` while implementing. Plane remains the source of truth
+Use `.beads/beads.py` while implementing. Linear remains the source of truth
 for titles, descriptions, cycle membership, and Done/In Progress.
 
 ```bash
