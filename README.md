@@ -21,6 +21,7 @@ UI-focused pieces extracted from `pi-herdr`:
 - Reusable custom themes (`acidbath`, `acidbath-cyberdyne-teal`)
 - Bundled AGY research tools from [`ameno-/pi-research`](https://github.com/ameno-/pi-research): `agy_web_search` and `agy_research`
 - Explicit [`pi-web-access`](https://github.com/nicobailon/pi-web-access) capability: `web_search`, `fetch_content`, `get_search_content`, and `source_check` for pages, PDFs, video, GitHub, and evidence retrieval
+- `compactor` extension: post-processes `bash` results, compacting large structured data (JSON/CSV/TSV/NDJSON over 2KB) to a 20-row preview and saving the full output to `/tmp/compact_data/` for nushell querying. Never touches `read`/`ls` results, code, or logs. Validated at 37.2% token savings on SWE-bench (100% pass rate) in [`nushell-agent-runtime`](https://github.com/ameno-/nushell-agent-runtime). Disable with `PI_ACIDBATH_COMPACTOR_DISABLE=1`; debug with `PI_ACIDBATH_COMPACTOR_DEBUG=1`.
 
 ## Skills
 
