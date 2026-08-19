@@ -45,6 +45,7 @@ import {
 } from "./ui-welcome.js";
 import { PIPELINES, parseDipArgs, runDipPipeline } from "../../adw/command.ts";
 import { formatSurfaceReport, surfaceStatusFromCounts, type SurfaceCheck } from "./ui-surfaces.js";
+import { installReviewCoordinator } from "./review-coordinator.ts";
 
 interface WorkingUi {
 	setWorkingVisible?: (visible: boolean) => void;
@@ -110,6 +111,12 @@ export default function acidbath(pi: ExtensionAPI): void {
 	// Renderer callbacks must remain presentation-only. Lifecycle events below
 	// own labels so partial tool redraws cannot trigger recursive UI renders.
 	registerToolRenderers(pi, { noColor: !COLOR_ENABLED, reducedMotion: REDUCED_MOTION });
+	installReviewCoordinator(pi, {
+		onStatus: (status) => {
+			reviewStatus = status;
+			footerWidget?.update({ reviewStatus: status });
+		},
+	});
 	const recordStatus = (status: string, message?: string): void => {
 		lifecycleState = reduceLifecycle(lifecycleState, { type: "status", status, message });
 		statusTimings.transition(status, performance.now());
@@ -127,6 +134,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 	let generation = "session-0";
 	let headerWidget: AcidbathHeader | undefined;
 	let welcomeWidget: AcidbathWelcome | undefined;
+	let reviewStatus: string | undefined;
 	let sessionSummary = DEFAULT_SESSION_SUMMARY;
 	let lastThinkingPreviewAt = Number.NEGATIVE_INFINITY;
 
@@ -218,14 +226,14 @@ export default function acidbath(pi: ExtensionAPI): void {
 			reasoningActive: lifecycleState.reasoningActive,
 			reasoningPreview: lifecycleState.reasoningPreview,
 		});
-		footerWidget?.update({ tokenContext });
+		footerWidget?.update({ tokenContext, reviewStatus });
 	}
 
 	const dispatchTokenEvent = (event: TokenContextEvent): void => {
 		tokenContext = reduceTokenContext(tokenContext, event);
 		contextPercent = tokenContext.facts?.contextPercent ?? undefined;
 		updateHeader();
-		footerWidget?.update({ contextPercent, tokenContext });
+		footerWidget?.update({ contextPercent, tokenContext, reviewStatus });
 	};
 
 	const pushContextUsage = (ctx: ExtensionContext): void => {
@@ -329,6 +337,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 				branchName,
 				contextVisible: true,
 				tokenContext,
+				reviewStatus,
 			});
 			return footer;
 		});
@@ -479,6 +488,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 		editorWidget = undefined;
 		ctx.ui.setEditorComponent(undefined);
 		contextPercent = undefined;
+		reviewStatus = undefined;
 		sessionSummary = DEFAULT_SESSION_SUMMARY;
 		tokenContext = createTokenContextState();
 		contextSequence = 0;

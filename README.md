@@ -46,10 +46,30 @@ Optional environment toggle:
 
 ## Commands
 
+- `/review start [repo]` — start or reuse Hunk and publish one Sideshow review summary
+- `/review status [repo]` — show Hunk file/hunk/comment counts
+- `/review comments [repo]` — import new Hunk comments and Sideshow browser feedback into the next Pi turn
+- `/review feedback [repo]` — import only Sideshow browser feedback
+- `/review sync [repo]` — reload Hunk and update the existing Sideshow card in place
+- `/review stop [repo]` — stop Acidbath review tracking without closing Hunk
+- `/hunk-comments` — lower-level Hunk-only comment import compatibility command
 - `/status-timings [show|reset]` — inspect measured event-to-event state dwell times
 - `/preflight` — show startup metadata and rerun checks
 - `/acidbath-update` — with confirmation, run `pi update --extensions` then `pi update`
 - `/agy-setup` — explicitly configure AGY headless permissions
+
+### Review ownership
+
+The review loop has one source of truth per concern:
+
+- **Hunk** owns the interactive diff, file/hunk navigation, highlights, and inline comments.
+- **Sideshow** shows the live review summary, changed-file counts, validation state, and browser feedback.
+- **Acidbath** coordinates starting, syncing, and importing review feedback.
+- **Pi** inspects feedback, makes the smallest requested change, and runs tests.
+
+Sideshow receives one review card per active Acidbath review and the card is
+updated in place; it is not a second diff viewer. Hunk remains user-owned: the
+coordinator never runs the interactive TUI or closes the review window.
 
 ## Publish to npm
 
