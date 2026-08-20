@@ -44,6 +44,7 @@ import {
 	type PreflightStatus,
 } from "./ui-welcome.js";
 import { PIPELINES, parseDipArgs, runDipPipeline } from "../../adw/command.ts";
+import { formatSurfaceReport, surfaceStatusFromCounts, type SurfaceCheck } from "./ui-surfaces.js";
 
 interface WorkingUi {
 	setWorkingVisible?: (visible: boolean) => void;
@@ -554,6 +555,57 @@ export default function acidbath(pi: ExtensionAPI): void {
 				dipRun = { name: parsed.name, status: "error", phase: dipRun?.phase };
 				workingUi(ctx).notify(error instanceof Error ? error.message : String(error), "error");
 			}
+		},
+	});
+
+	pi.registerCommand("surfaces", {
+		description: "Check the three surfaces: Sideshow board, Notion design space, Linear ledger.",
+		handler: async (_args, ctx) => {
+			const ui = workingUi(ctx);
+			const sideshowUrl = process.env.SIDESHOW_URL ?? "http://localhost:8228";
+			const [linear, notion, sideshow] = await Promise.allSettled([
+				pi.exec("linear", ["auth", "whoami"], { timeout: 4_000 }),
+				pi.exec("ntn", ["doctor"], { timeout: 8_000 }),
+				pi.exec("curl", ["-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "3", sideshowUrl], { timeout: 5_000 }),
+			]);
+
+			const checks: SurfaceCheck[] = [];
+
+			if (linear.status === "fulfilled" && linear.value.code === 0) {
+				const slug = /Slug:\s*(\S+)/.exec(linear.value.stdout)?.[1] ?? "authenticated";
+				checks.push({ name: "Linear", status: "ok", detail: `workspace ${slug}` });
+			} else {
+				const reason = linear.status === "rejected" ? "unavailable" : "auth failed — see linear-cli skill";
+				checks.push({ name: "Linear", status: "error", detail: reason });
+			}
+
+			if (notion.status === "fulfilled" && notion.value.code === 0) {
+				const counts = /(\d+) passed(?:, (\d+) warnings?)?/.exec(notion.value.stdout);
+				const warned = counts?.[2] ? Number.parseInt(counts[2], 10) : 0;
+				checks.push({
+					name: "Notion",
+					status: surfaceStatusFromCounts(Number.parseInt(counts?.[1] ?? "0", 10), warned, 0),
+					detail: counts ? `${counts[1]} checks passed${warned > 0 ? `, ${warned} warnings` : ""}` : "doctor ok",
+				});
+			} else {
+				checks.push({ name: "Notion", status: "error", detail: notion.status === "rejected" ? "unavailable" : "doctor failed — run ntn login" });
+			}
+
+			if (sideshow.status === "fulfilled") {
+				const code = sideshow.value.stdout.trim();
+				const reachable = code === "200" || code === "401";
+				const host = sideshowUrl.replace(/^https?:\/\//, "");
+				checks.push({
+					name: "Sideshow",
+					status: reachable ? "ok" : "error",
+					detail: reachable ? `${host} (http ${code})` : `${host} unreachable`,
+				});
+			} else {
+				checks.push({ name: "Sideshow", status: "error", detail: "unreachable — sideshow serve or check SIDESHOW_URL" });
+			}
+
+			const hasError = checks.some((check) => check.status === "error");
+			ui.notify(formatSurfaceReport(checks), hasError ? "warning" : "info");
 		},
 	});
 

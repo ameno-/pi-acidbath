@@ -9,6 +9,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 type ToolMotionState = "pending" | "success" | "error";
 import { formatToolRow } from "./ui-tool-rows.js";
+import { classifySemanticCommand } from "./ui-semantic-commands.js";
 import { createExpandedView } from "./rendering/expanded-views.js";
 import { DiffView } from "./rendering/diff-view.js";
 import { statusGlyph, toolGlyph, animFrame, animFrameCount, STATUS_LUMPY } from "./rendering/kaomoji.js";
@@ -315,6 +316,10 @@ function previewForResult(toolName: string, result: Record<string, unknown>): { 
 }
 
 function targetForTool(toolName: string, args: Record<string, unknown>): string {
+	if (toolName === "bash") {
+		const semantic = classifySemanticCommand(args.command);
+		if (semantic) return semantic.target;
+	}
 	const value = toolName === "bash"
 		? args.command
 		: args.path ?? args.file_path ?? args.pattern ?? args.directory ?? args.query;
@@ -324,6 +329,10 @@ function targetForTool(toolName: string, args: Record<string, unknown>): string 
 function metadataForTool(toolName: string, args: Record<string, unknown>, result: Record<string, unknown>): string[] {
 	const details = isRecord(result.details) ? result.details : {};
 	const metadata: string[] = [];
+	if (toolName === "bash") {
+		const semantic = classifySemanticCommand(args.command);
+		if (semantic) metadata.push(...semantic.metadata);
+	}
 	const exitCode = numberValue(details.exitCode ?? result.exitCode);
 	if (toolName === "bash" && exitCode !== undefined) metadata.push(`exit ${exitCode}`);
 	const lines = numberValue(details.lines ?? details.lineCount ?? details.matchCount ?? details.entryCount);

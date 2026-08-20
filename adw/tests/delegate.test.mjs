@@ -2,7 +2,7 @@
 // Run with: npx tsx adw/tests/delegate.test.mjs
 
 import assert from "node:assert/strict";
-import { DelegateSystem, parseModelSpec, resolveTools, SIDESHOW_HANDOFF_PROMPT } from "../delegate.ts";
+import { DelegateSystem, parseModelSpec, resolveTools, SIDESHOW_HANDOFF_PROMPT, SURFACE_HANDOFF_PROMPT } from "../delegate.ts";
 import { OUTPUT_SCHEMAS, SUBMIT_INSTRUCTION } from "../envelope.ts";
 
 let passed = 0;
@@ -148,12 +148,21 @@ await test("dispatchPi forwards the explicit model and tool allowlist, then clea
   });
   assert.equal(result.status, "success");
   assert.equal(result.summary, "fixture response");
-  assert.equal(prompt, `rules\n\n${SIDESHOW_HANDOFF_PROMPT}\n\ntask`);
+  assert.equal(prompt, `rules\n\n${SURFACE_HANDOFF_PROMPT}\n\ntask`);
   assert.deepEqual(options.tools, ["read", "grep"]);
   assert.equal(options.noTools, "all");
   assert.deepEqual(options.customTools.map((tool) => tool.name), ["read", "grep"]);
   assert.equal(events.length, 1);
   assert.ok(disposed && unsubscribed, "session resources must be released");
+});
+
+await test("surface handoff prompt names all three surfaces and keeps the deprecated alias", async () => {
+  assert.match(SURFACE_HANDOFF_PROMPT, /Surface handoff/);
+  assert.match(SURFACE_HANDOFF_PROMPT, /Linear:/);
+  assert.match(SURFACE_HANDOFF_PROMPT, /Notion:/);
+  assert.match(SURFACE_HANDOFF_PROMPT, /Sideshow/);
+  assert.match(SURFACE_HANDOFF_PROMPT, /chain-of-thought/);
+  assert.equal(SIDESHOW_HANDOFF_PROMPT, SURFACE_HANDOFF_PROMPT, "deprecated alias stays identical");
 });
 
 await test("dispatchPi disposes a session when prompt execution fails", async () => {
@@ -243,7 +252,7 @@ await test("no schema means no submit tool and the prose handoff instead", async
   const { ds, seen } = submittingDelegate({ finalText: "prose" });
   await ds.dispatchPi({ agent: TEST_AGENT, prompt: "review", cwd: process.cwd() });
   assert.ok(!seen.options.tools.includes("submit"));
-  assert.ok(seen.prompt.includes(SIDESHOW_HANDOFF_PROMPT));
+  assert.ok(seen.prompt.includes(SURFACE_HANDOFF_PROMPT));
   assert.ok(!seen.prompt.includes(SUBMIT_INSTRUCTION));
 });
 
@@ -251,7 +260,7 @@ await test("the submit instruction replaces the prose handoff — never both", a
   const { ds, seen } = submittingDelegate({ submission: REVIEW_SUBMISSION });
   await ds.dispatchPi({ agent: TEST_AGENT, prompt: "review", cwd: process.cwd(), outputSchema: REVIEW_SCHEMA });
   assert.ok(seen.prompt.includes(SUBMIT_INSTRUCTION));
-  assert.ok(!seen.prompt.includes(SIDESHOW_HANDOFF_PROMPT), "asking for both reliably gets you both");
+  assert.ok(!seen.prompt.includes(SURFACE_HANDOFF_PROMPT), "asking for both reliably gets you both");
 });
 
 await test("submitted fields reach the envelope", async () => {
