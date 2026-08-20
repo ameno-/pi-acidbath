@@ -36,8 +36,8 @@ import {
 	type UsageFacts,
 } from "./ui-token-context.js";
 import { truncateToWidth } from "./ui-gauge.js";
-import {
 import { expandPath, findEntry, formatCatalog, loadCatalog } from "./skill-catalog.ts";
+import {
 	AcidbathWelcome,
 	initialWelcomeState,
 	modelCardFor,

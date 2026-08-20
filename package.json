@@ -32,7 +32,7 @@
     "typescript": "^5.8.3"
   },
   "scripts": {
-    "test": "node --experimental-strip-types --no-warnings scripts/test-package-manifest.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-labels.mjs && node --experimental-strip-types --no-warnings scripts/test-token-context.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-summary.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-lifecycle.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-welcome.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-activity-status.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-footer-activity.mjs && node --experimental-strip-types --no-warnings scripts/test-skill-catalog.mjs",
+    "test": "node --experimental-strip-types --no-warnings scripts/test-package-manifest.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-labels.mjs && node --experimental-strip-types --no-warnings scripts/test-token-context.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-summary.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-lifecycle.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-welcome.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-activity-status.mjs && node --experimental-strip-types --no-warnings scripts/test-ui-footer-activity.mjs && node --experimental-strip-types --no-warnings scripts/test-skill-catalog.mjs && node --experimental-strip-types --no-warnings scripts/test-compactor.mjs",
     "test:visual": "node --experimental-strip-types --no-warnings tests/visual/test-tool-row-visual.mjs",
     "bench:lifecycle": "node --experimental-strip-types --no-warnings scripts/bench-lifecycle.mjs",
     "typecheck": "tsc --noEmit"
@@ -40,6 +40,7 @@
   "pi": {
     "extensions": [
       "./extensions/acidbath/index.ts",
+      "./extensions/compactor/index.ts",
       "./node_modules/pi-research/extension/index.ts",
       "./node_modules/pi-web-access/index.ts"
     ],
