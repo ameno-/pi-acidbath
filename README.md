@@ -21,7 +21,20 @@ UI-focused pieces extracted from `pi-herdr`:
 - Reusable custom themes (`acidbath`, `acidbath-cyberdyne-teal`)
 - Bundled AGY research tools from [`ameno-/pi-research`](https://github.com/ameno-/pi-research): `agy_web_search` and `agy_research`
 - Explicit [`pi-web-access`](https://github.com/nicobailon/pi-web-access) capability: `web_search`, `fetch_content`, `get_search_content`, and `source_check` for pages, PDFs, video, GitHub, and evidence retrieval
-- `compactor` extension: post-processes `bash` results, compacting large structured data (JSON/CSV/TSV/NDJSON over 2KB) to a 20-row preview and saving the full output to `/tmp/compact_data/` for nushell querying. Never touches `read`/`ls` results, code, or logs. Validated at 37.2% token savings on SWE-bench (100% pass rate) in [`nushell-agent-runtime`](https://github.com/ameno-/nushell-agent-runtime). Disable with `PI_ACIDBATH_COMPACTOR_DISABLE=1`; debug with `PI_ACIDBATH_COMPACTOR_DEBUG=1`.
+- `compactor` extension: post-processes `bash` results, compacting large structured data (JSON/CSV/TSV/NDJSON over 2KB) to a 20-row preview and saving the full output to `/tmp/compact_data/` for nushell querying. Never touches `read`/`ls` results, code, or logs. Validated at 37.2% token savings on SWE-bench (100% pass rate) in [`nushell-agent-runtime`](https://github.com/ameno-/nushell-agent-runtime).
+
+#### Compactor configuration
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `PI_ACIDBATH_COMPACTOR_DISABLE` | unset | Set to `1` to disable compaction entirely |
+| `PI_ACIDBATH_COMPACTOR_DEBUG` | unset | Set to `1` for stderr debug logging |
+| `PI_ACIDBATH_COMPACTOR_THRESHOLD` | `2048` | Minimum output size in bytes before compaction is considered |
+| `PI_ACIDBATH_COMPACTOR_PREVIEW_ROWS` | `20` | Rows kept in the inline preview |
+| `PI_ACIDBATH_COMPACTOR_DATA_DIR` | `/tmp/compact_data` | Where full outputs are saved for nushell querying |
+| `PI_ACIDBATH_NU_BIN` | auto-detect | Path to the nushell binary (default: `~/.local/bin/nu`, then `PATH`) |
+
+Requires nushell; without it the compactor is a silent no-op.
 
 ## Skills
 

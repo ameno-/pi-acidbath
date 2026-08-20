@@ -32,7 +32,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -89,8 +89,7 @@ try {
 function runNuWithInput(pipeline: string, input: string): { success: boolean; output: string } {
 	if (!NU_BIN) return { success: false, output: "nushell not found" };
 	try {
-		const escaped = pipeline.replace(/'/g, "'\\''");
-		const result = execSync(`'${NU_BIN}' --stdin -c '${escaped}'`, {
+		const result = execFileSync(NU_BIN, ["--stdin", "-c", pipeline], {
 			encoding: "utf-8",
 			input,
 			timeout: NU_TIMEOUT_MS,
@@ -217,9 +216,8 @@ function detectFormat(text: string): "json_array" | "json_object" | "ndjson" | "
  * nushell. This is the "nushell as DB" pattern: data is persisted to disk,
  * the agent queries specific parts using nushell, keeping context small.
  */
-function saveFullData(text: string): string | null {
+function saveFullData(text: string, format: string): string | null {
 	const hash = crypto.createHash("sha256").update(text).digest("hex").slice(0, 12);
-	const format = detectFormat(text);
 	const ext = format === "csv" ? ".csv" : format === "tsv" ? ".tsv" : format === "ndjson" ? ".ndjson" : ".json";
 	const filePath = path.join(COMPACT_DATA_DIR, `${hash}${ext}`);
 	try {
@@ -359,7 +357,7 @@ export function tryCompact(text: string): string | null {
 	debug(`detected ${format} (${text.length} bytes), compacting...`);
 
 	// Save full data to temp file (nushell-as-DB)
-	const fullDataPath = saveFullData(text);
+	const fullDataPath = saveFullData(text, format);
 
 	let result: { preview: string; totalRows: number } | null = null;
 	let formatLabel = "";
