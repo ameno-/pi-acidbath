@@ -51,6 +51,7 @@ Optional environment toggle:
 - `/review comments [repo]` — import new Hunk comments and Sideshow browser feedback into the next Pi turn
 - `/review feedback [repo]` — import only Sideshow browser feedback
 - `/review sync [repo]` — reload Hunk and update the existing Sideshow card in place
+- `/review archive <Notion page id or URL> [repo]` — write an idempotent durable checkpoint to an existing Notion page
 - `/review stop [repo]` — stop Acidbath review tracking without closing Hunk
 - `/hunk-comments` — lower-level Hunk-only comment import compatibility command
 - `/status-timings [show|reset]` — inspect measured event-to-event state dwell times
@@ -68,8 +69,19 @@ The review loop has one source of truth per concern:
 - **Pi** inspects feedback, makes the smallest requested change, and runs tests.
 
 Sideshow receives one review card per active Acidbath review and the card is
-updated in place; it is not a second diff viewer. Hunk remains user-owned: the
-coordinator never runs the interactive TUI or closes the review window.
+updated in place; it is not a second diff viewer. Notion is updated only at an
+explicit `/review archive` checkpoint and never selected implicitly. Hunk
+remains user-owned: the coordinator never runs the interactive TUI or closes
+the review window.
+
+### Optional Warp client
+
+Warp can participate as an alternate agent client, not as another coordinator.
+Its current Agent CLI supports project rules and MCP servers, including
+`.warp/.mcp.json` and compatible third-party MCP configurations. Keep Warp
+optional and user-authenticated; do not add Warp credentials or auto-start
+commands to Acidbath. If enabled later, point it at the same Hunk/Sideshow/
+Notion workflow and preserve Hunk as the diff source of truth.
 
 ## Publish to npm
 

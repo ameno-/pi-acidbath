@@ -7,14 +7,17 @@
  */
 
 import { realpath } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { basename, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	commentFingerprint,
 	commentsFromHunk,
 	formatCommentHandoff,
+	formatNotionCheckpoint,
 	formatReviewCard,
 	reviewCardData,
+	upsertNotionCheckpoint,
 	snapshotFromHunk,
 	type HunkReviewSnapshot,
 	type ReviewCommentSummary,
@@ -322,11 +325,41 @@ function persistState(pi: ExtensionAPI, state: ReviewState): void {
 	pi.appendEntry(REVIEW_STATE_ENTRY, stateData(state));
 }
 
-function parseReviewArgs(raw: string): { action: string; repo?: string } {
+function parseReviewArgs(raw: string): { action: string; args: string[] } {
 	const tokens = raw.trim().split(/\s+/).filter(Boolean);
 	const action = tokens.shift()?.toLowerCase() || "status";
-	const repo = tokens.length > 0 ? tokens.join(" ") : undefined;
-	return { action, repo };
+	return { action, args: tokens };
+}
+
+function notionPageId(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	const match = value.match(/[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/i);
+	return match?.[0]?.replace(/-/g, "");
+}
+
+async function runNotion(args: string[], input?: string): Promise<string> {
+	return new Promise((resolvePromise, reject) => {
+		const child = spawn("ntn", args, { stdio: ["pipe", "pipe", "pipe"] });
+		let stdout = "";
+		let stderr = "";
+		child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+		child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+		child.once("error", reject);
+		child.once("close", (code) => {
+			if (code === 0) resolvePromise(stdout);
+			else reject(new Error((stderr || stdout || "Notion command failed").trim()));
+		});
+		if (input !== undefined) child.stdin.end(input);
+		else child.stdin.end();
+	});
+}
+
+async function readNotionPage(pageId: string): Promise<string> {
+	return runNotion(["pages", "get", pageId]);
+}
+
+async function writeNotionPage(pageId: string, markdown: string): Promise<void> {
+	await runNotion(["pages", "edit", pageId], markdown);
 }
 
 function statusText(snapshot: HunkReviewSnapshot, state: ReviewState): string {
@@ -458,9 +491,10 @@ export function installReviewCoordinator(pi: ExtensionAPI, options: ReviewCoordi
 	});
 
 	pi.registerCommand("review", {
-		description: "Coordinate Hunk review and its Sideshow summary: /review start|status|comments|sync|stop",
+		description: "Coordinate Hunk, Sideshow, and optional Notion archive: /review start|status|comments|feedback|sync|archive|stop",
 		handler: async (rawArgs, ctx) => {
-			const { action, repo: requestedRepo } = parseReviewArgs(rawArgs);
+			const { action, args } = parseReviewArgs(rawArgs);
+					const requestedRepo = action === "archive" ? args[1] : args[0];
 			const repo = await canonicalRepo(pi, requestedRepo ?? state.repo ?? ".", ctx.cwd);
 			try {
 				if (action === "start") {
@@ -560,6 +594,26 @@ export function installReviewCoordinator(pi: ExtensionAPI, options: ReviewCoordi
 					return;
 				}
 
+				if (action === "archive") {
+					const pageId = notionPageId(args[0]);
+					if (!pageId) throw new Error("Usage: /review archive <Notion page id or URL> [repo]");
+					const session = await hunkSessionForRepo(pi, repo);
+					if (!session) throw new Error(`No active Hunk session for ${repo}. Start one with /review start.`);
+					const snapshot = await readHunkReview(pi, repo);
+					try {
+						await ensureSideshowRef(repo, state);
+					} catch {
+						// Notion archive remains useful when Sideshow is unavailable.
+					}
+					const current = await readNotionPage(pageId);
+					const pending = pendingHumanComments(snapshot, state).length;
+					const liveCard = state.sideshowPostId ? `${sideshowUrl()}/p/${state.sideshowPostId}` : undefined;
+					const updated = upsertNotionCheckpoint(current, snapshot.sessionId, formatNotionCheckpoint(snapshot, pending, liveCard));
+					await writeNotionPage(pageId, updated);
+					workingUi(ctx).notify(`Archived Hunk review checkpoint to Notion page ${pageId}.`, "info");
+					return;
+				}
+
 				if (action === "sync") {
 					await syncReview(repo, ctx, { reload: true, reason: "manual sync", notify: true });
 					persistState(pi, state);
@@ -574,7 +628,7 @@ export function installReviewCoordinator(pi: ExtensionAPI, options: ReviewCoordi
 					return;
 				}
 
-				workingUi(ctx).notify("Usage: /review [start|status|comments|feedback|sync|stop] [repo]", "error");
+				workingUi(ctx).notify("Usage: /review [start|status|comments|feedback|sync|archive|stop] [repo]", "error");
 			} catch (error) {
 				notifyError(ctx, error);
 			}
