@@ -9,6 +9,7 @@ export interface AcidbathFooterState {
 	/** Current Git branch; a dash is used while the async lookup is pending. */
 	branchName?: string;
 	contextPercent?: number;
+	reviewStatus?: string;
 	contextVisible: boolean;
 	tokenContext?: TokenContextState;
 }
@@ -67,7 +68,8 @@ export class AcidbathFooter implements Component {
 		const location = basename(this.cwd) || this.cwd;
 		const context = this.state.contextVisible ? this.contextLabel(CONTEXT_SLOT_WIDTH) : "";
 		const usage = this.terminalUsage();
-		const right = [context, usage].filter(Boolean).join(" ");
+		const review = this.state.reviewStatus ?? "";
+		const right = [review, context, usage].filter(Boolean).join(" ");
 		const identity = this.fullIdentity(location, model);
 		const full = this.fit(identity, right, safeWidth);
 		if (full) return this.renderParts(full.left, full.right, safeWidth);
@@ -133,6 +135,7 @@ function sameFooterState(left: AcidbathFooterState, right: AcidbathFooterState):
 	return left.modelName === right.modelName
 		&& left.branchName === right.branchName
 		&& left.contextPercent === right.contextPercent
+		&& left.reviewStatus === right.reviewStatus
 		&& left.contextVisible === right.contextVisible
 		&& left.tokenContext === right.tokenContext;
 }
