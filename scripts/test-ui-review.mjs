@@ -3,10 +3,12 @@ import {
   commentFingerprint,
   commentsFromHunk,
   formatCommentHandoff,
+  formatNotionCheckpoint,
   formatReviewCard,
   reviewCardData,
   reviewStatus,
   snapshotFromHunk,
+  upsertNotionCheckpoint,
 } from "../extensions/acidbath/ui-review.ts";
 
 const payload = {
@@ -37,5 +39,13 @@ const comments = commentsFromHunk({ comments: [{ noteId: "user:1", source: "user
 assert.equal(comments.length, 1);
 assert.equal(commentFingerprint(comments[0]), "user:1\u0000src/index.ts\u0000line 12\u0000Try a smaller helper.");
 assert.match(formatCommentHandoff("/repo", comments), /human-authored notes/);
+
+const checkpoint = formatNotionCheckpoint(snapshot, 1, "https://sideshow.example/review");
+assert.match(checkpoint, /Live Sideshow card/);
+const pageWithCheckpoint = upsertNotionCheckpoint("# Task\n\n" + checkpoint, snapshot.sessionId, checkpoint);
+assert.equal(pageWithCheckpoint.split(`## Review checkpoint · ${snapshot.sessionId}`).length - 1, 1);
+const replaced = upsertNotionCheckpoint(pageWithCheckpoint, snapshot.sessionId, checkpoint.replace("Ready for review", "Needs attention"));
+assert.equal(replaced.split(`## Review checkpoint · ${snapshot.sessionId}`).length - 1, 1);
+assert.match(replaced, /Needs attention/);
 
 console.log("ui-review: ok");
