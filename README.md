@@ -21,7 +21,7 @@ UI-focused pieces extracted from `pi-herdr`:
 - Reusable custom themes (`acidbath`, `acidbath-cyberdyne-teal`)
 - Bundled AGY research tools from [`ameno-/pi-research`](https://github.com/ameno-/pi-research): `agy_web_search` and `agy_research`
 - Explicit [`pi-web-access`](https://github.com/nicobailon/pi-web-access) capability: `web_search`, `fetch_content`, `get_search_content`, and `source_check` for pages, PDFs, video, GitHub, and evidence retrieval
-- `compactor` extension: post-processes `bash` results, compacting large structured data (JSON/CSV/TSV/NDJSON over 2KB) to a 20-row preview and saving the full output to `/tmp/compact_data/` for nushell querying. Never touches `read`/`ls` results, code, or logs. Validated at 37.2% token savings on SWE-bench (100% pass rate) in [`nushell-agent-runtime`](https://github.com/ameno-/nushell-agent-runtime).
+- `compactor` extension: post-processes `bash` results, compacting large structured data (JSON/CSV/TSV/NDJSON over 2KB) to a 20-row preview and saving the full output to `/tmp/compact_data/` for nushell querying. Never touches `read`/`ls` results, code, or logs. Validated at 37.2% token savings on SWE-bench (100% pass rate) in [`nushell-agent-runtime`](https://github.com/ameno-/nushell-agent-runtime). The compaction core lives in `extensions/compactor/lib.ts` (pure, no Pi API) and is shared by the Pi extension and the MCP server below.
 
 #### Compactor configuration
 
@@ -35,6 +35,47 @@ UI-focused pieces extracted from `pi-herdr`:
 | `PI_ACIDBATH_NU_BIN` | auto-detect | Path to the nushell binary (default: `~/.local/bin/nu`, then `PATH`) |
 
 Requires nushell; without it the compactor is a silent no-op.
+
+## MCP server (any client)
+
+The same compaction core is exposed as a stdio MCP server so non-Pi tools
+(Claude Code, Droids, Codex, Aider, …) can compact and query large
+structured data too. Zero dependencies — hand-rolled JSON-RPC 2.0 over
+newline-delimited stdio; the compaction logic is the shared
+`extensions/compactor/lib.ts`.
+
+```
+node /home/donatello/dev/pi-acidbath/mcp/compactor-server.mjs
+```
+
+Tools:
+
+| Tool | Purpose |
+|---|---|
+| `compact { text, previewRows? }` | Compact JSON/NDJSON/CSV/TSV into a preview + savings stats; full data is always saved to disk first (result includes the path) |
+| `query { file, pipeline }` | Run a nushell pipeline against a saved file (the query half of nushell-as-DB), e.g. `where status == "active" \| length` |
+| `schema { file }` | Describe a saved file: nushell shape, columns, row count |
+
+Claude Code registration (`~/.claude/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "acidbath-compactor": {
+      "command": "node",
+      "args": ["/home/donatello/dev/pi-acidbath/mcp/compactor-server.mjs"]
+    }
+  }
+}
+```
+
+Requires nushell on PATH (or `PI_ACIDBATH_NU_BIN` in the client's
+environment). The server still starts without nushell and reports the
+unavailability in tool results instead of failing. The same `PI_ACIDBATH_*`
+environment variables from the compactor table above apply.
+
+Test: `node --experimental-strip-types --no-warnings scripts/test-mcp-compactor.mjs`
+(full MCP handshake + tool round-trips; part of `npm test`).
 
 ## Skills
 
