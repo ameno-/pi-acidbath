@@ -23,6 +23,12 @@ UI-focused pieces extracted from `pi-herdr`:
 - Explicit [`pi-web-access`](https://github.com/nicobailon/pi-web-access) capability: `web_search`, `fetch_content`, `get_search_content`, and `source_check` for pages, PDFs, video, GitHub, and evidence retrieval
 - `compactor` extension: post-processes `bash` results, compacting large structured data (JSON/CSV/TSV/NDJSON over 2KB) to a 20-row preview and saving the full output to `/tmp/compact_data/` for nushell querying. Never touches `read`/`ls` results, code, or logs. Validated at 37.2% token savings on SWE-bench (100% pass rate) in [`nushell-agent-runtime`](https://github.com/ameno-/nushell-agent-runtime). The compaction core lives in `extensions/compactor/lib.ts` (pure, no Pi API) and is shared by the Pi extension and the MCP server below.
 
+  **Visibility**:
+  - Each compacted bash result gets a one-line marker appended, e.g. `[compactor: json_array 22.2KB → 744B (-97%); full → /tmp/compact_data/abc.json]`, so you can see compaction happening in the tool row.
+  - `/compactor` slash command shows session totals, per-format breakdown, biggest hit, and skip reasons.
+  - `/compactor today` aggregates `/tmp/compact_data/` for the current day.
+  - `/compactor reset` clears session stats.
+
 #### Compactor configuration
 
 | Env var | Default | Purpose |
@@ -55,6 +61,7 @@ Tools:
 | `compact { text, previewRows? }` | Compact JSON/NDJSON/CSV/TSV into a preview + savings stats; full data is always saved to disk first (result includes the path) |
 | `query { file, pipeline }` | Run a nushell pipeline against a saved file (the query half of nushell-as-DB), e.g. `where status == "active" \| length` |
 | `schema { file }` | Describe a saved file: nushell shape, columns, row count |
+| `stats { dir?, sinceTs?, top? }` | Aggregate stats over a compact-data directory: file count, total bytes, per-format breakdown, oldest/newest timestamps, top-10 by size. Reads each file's sidecar metadata — no nushell needed. |
 
 Claude Code registration (`~/.claude/mcp.json`):
 

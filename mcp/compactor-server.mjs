@@ -40,10 +40,10 @@
  * the server still starts and reports the unavailability in results.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { tryCompact, queryFile, fileSchema } from "../extensions/compactor/lib.ts";
+import { tryCompact, queryFile, fileSchema, dataDirStats } from "../extensions/compactor/lib.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(readFileSync(path.join(__dirname, "..", "package.json"), "utf-8")).version;
@@ -101,6 +101,30 @@ const TOOLS = [
 				file: { type: "string", description: "Path to the data file." },
 			},
 			required: ["file"],
+		},
+	},
+	{
+		name: "stats",
+		description:
+			"Aggregate stats over the saved-data directory (default /tmp/compact_data/): file count, " +
+			"total bytes on disk, breakdown by format (json/csv/tsv/ndjson), oldest/newest timestamps, and " +
+			"the top 10 largest saved files. Reads each file's sidecar metadata — no nushell required and no " +
+			"data is loaded. Use this to see what the compactor has saved so far and how much disk space it uses.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				dir: { type: "string", description: "Directory to scan (default /tmp/compact_data/)." },
+				sinceTs: {
+					type: "number",
+					description: "Only include files saved at or after this unix-ms timestamp (for /compactor today style filters).",
+				},
+				top: {
+					type: "number",
+					description: "Number of top-by-size entries to return (default 10, max 50).",
+					minimum: 1,
+					maximum: 50,
+				},
+			},
 		},
 	},
 ];
@@ -169,6 +193,15 @@ function handleTool(name, args) {
 				);
 			}
 
+			case "stats": {
+				const dir = String(args?.dir ?? "/tmp/compact_data/");
+				const sinceTs = typeof args?.sinceTs === "number" ? args.sinceTs : null;
+				const top = typeof args?.top === "number" ? Math.max(1, Math.min(50, args.top)) : 10;
+				const full = dataDirStats(dir);
+				const filtered = sinceTs !== null ? filterSince(full, sinceTs) : full;
+				return toolText(renderStats(filtered, top));
+			}
+
 			default:
 				return { content: [{ type: "text", text: `error: unknown tool ${name}` }], isError: true };
 		}
@@ -189,6 +222,71 @@ function boundOutput(output) {
 			output.slice(0, MAX_QUERY_CHARS) +
 			`\n[truncated: ${output.length - MAX_QUERY_CHARS} more chars — refine the pipeline to narrow the result]`,
 	};
+}
+
+// ─── stats tool helpers ─────────────────────────────────────────────────
+
+function humanBytes(n) {
+	if (!Number.isFinite(n)) return "?B";
+	if (n < 1024) return `${n}B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+	return `${(n / (1024 * 1024)).toFixed(2)}MB`;
+}
+
+function filterSince(stats, sinceTs) {
+	const recent = stats.topBySize.filter((e) => e.ts >= sinceTs);
+	const byFormat = {};
+	let totalBytes = 0;
+	let oldestTs = null;
+	let newestTs = null;
+	for (const e of recent) {
+		const b = byFormat[e.format] ?? (byFormat[e.format] = { count: 0, bytes: 0, originalBytes: 0 });
+		b.count++;
+		b.bytes += e.bytes;
+		totalBytes += e.bytes;
+		if (oldestTs === null || e.ts < oldestTs) oldestTs = e.ts;
+		if (newestTs === null || e.ts > newestTs) newestTs = e.ts;
+	}
+	return {
+		dir: stats.dir,
+		fileCount: recent.length,
+		totalBytes,
+		oldestTs,
+		newestTs,
+		byFormat,
+		topBySize: recent,
+		noMetaCount: 0,
+	};
+}
+
+function renderStats(s, top) {
+	if (s.fileCount === 0) {
+		return `stats: ${s.dir}\nfiles: 0\ndisk: 0B`;
+	}
+	const lines = [];
+	lines.push(`stats: ${s.dir}`);
+	lines.push(`files: ${s.fileCount} · disk: ${humanBytes(s.totalBytes)}`);
+	if (s.noMetaCount > 0) lines.push(`(${s.noMetaCount} files predate metadata — counts only)`);
+	if (s.oldestTs && s.newestTs) {
+		lines.push(`range: ${new Date(s.oldestTs).toISOString()} → ${new Date(s.newestTs).toISOString()}`);
+	}
+	const formats = Object.entries(s.byFormat).sort((a, b) => b[1].bytes - a[1].bytes);
+	if (formats.length > 0) {
+		lines.push("");
+		lines.push("by format:");
+		for (const [fmt, agg] of formats) {
+			const orig = agg.originalBytes > 0 ? `  (orig ${humanBytes(agg.originalBytes)})` : "";
+			lines.push(`  ${fmt.padEnd(12)} ${String(agg.count).padStart(4)} files  ${humanBytes(agg.bytes)}${orig}`);
+		}
+	}
+	if (s.topBySize.length > 0) {
+		lines.push("");
+		lines.push(`top by size (${Math.min(top, s.topBySize.length)}):`);
+		for (const f of s.topBySize.slice(0, top)) {
+			lines.push(`  ${humanBytes(f.bytes).padStart(8)}  ${f.format.padEnd(8)}  ${path.basename(f.file)}`);
+		}
+	}
+	return lines.join("\n");
 }
 
 // ─── JSON-RPC 2.0 over stdio ─────────────────────────────────────────────
