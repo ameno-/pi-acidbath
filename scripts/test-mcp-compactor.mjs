@@ -96,13 +96,19 @@ try {
 	// 2. tools/list
 	const { tools } = await client.request("tools/list", {});
 	const names = tools.map((t) => t.name);
-	assert.deepEqual(names, ["compact", "query", "schema"]);
+	assert.deepEqual(names, ["compact", "query", "schema", "stats"]);
 	for (const t of tools) {
 		assert.ok(t.description.length > 30, `${t.name} needs a real description`);
 		assert.ok(t.inputSchema.type === "object");
-		assert.ok(t.inputSchema.required.length > 0);
 	}
-	data.push("tools/list: compact + query + schema with schemas OK");
+	// compact, query, schema all require specific fields; stats accepts an empty args object
+	const requiredMap = { compact: ["text"], query: ["file", "pipeline"], schema: ["file"] };
+	for (const t of tools) {
+		if (requiredMap[t.name]) {
+			assert.deepEqual(t.inputSchema.required, requiredMap[t.name]);
+		}
+	}
+	data.push("tools/list: compact + query + schema + stats with schemas OK");
 
 	const noNu = (m) => /nushell not found/i.test(m);
 
@@ -171,7 +177,29 @@ try {
 		assert.ok(unknownErr && /unknown tool/.test(unknownErr.message), "unknown tool should be a JSON-RPC error");
 		data.push("error paths: bad pipeline / missing file / unknown tool handled OK");
 
-		// 7. server still alive after errors
+		// 7. stats tool: aggregates over /tmp/compact_data/, includes the
+		// file we just saved with fullDataPath.
+		const stats = await client.request("tools/call", { name: "stats", arguments: { dir: "/tmp/compact_data/" } });
+		assert.equal(stats.isError, undefined, `stats failed: ${JSON.stringify(stats)}`);
+		const statsText = stats.content[0].text;
+		assert.match(statsText, /files: \d+/);
+		assert.match(statsText, /by format:/);
+		// We just wrote a file with format json_array, so it should appear
+		// somewhere — either in by format or top by size.
+		assert.ok(
+			/json_array/.test(statsText) || statsText.includes(path.basename(fullDataPath)),
+			`stats output should mention our json_array file: ${statsText}`,
+		);
+		// sinceTs filter: only the last hour
+		const oneHourAgo = Date.now() - 3_600_000;
+		const statsRecent = await client.request("tools/call", {
+			name: "stats",
+			arguments: { dir: "/tmp/compact_data/", sinceTs: oneHourAgo },
+		});
+		assert.equal(statsRecent.isError, undefined);
+		data.push("stats: aggregate /tmp/compact_data/ + sinceTs filter OK");
+
+		// 8. server still alive after errors
 		const ping = await client.request("ping", {});
 		assert.deepEqual(ping, {});
 		data.push("server alive after error round-trips OK");

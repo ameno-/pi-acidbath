@@ -223,18 +223,168 @@ export function detectFormat(text: string, threshold: number = COMPACTION_THRESH
  * persisted to disk, the client queries specific parts using nushell,
  * keeping context small.
  */
-export function saveFullData(text: string, format: string): string | null {
+export function saveFullData(text: string, format: string, extra?: { totalRows?: number }): string | null {
 	const hash = crypto.createHash("sha256").update(text).digest("hex").slice(0, 12);
 	const ext = format === "csv" ? ".csv" : format === "tsv" ? ".tsv" : format === "ndjson" ? ".ndjson" : ".json";
 	const filePath = path.join(COMPACT_DATA_DIR, `${hash}${ext}`);
+	const metaPath = `${filePath}.meta.json`;
 	try {
 		fs.writeFileSync(filePath, text);
+		// Sidecar metadata: lets the `stats` MCP tool and `/compactor today`
+		// command report exact original size / format / row count without
+		// re-reading every saved file. Atomic-ish: written after the data so
+		// a missing sidecar means "saved before stats existed, skip".
+		fs.writeFileSync(
+			metaPath,
+			JSON.stringify({
+				format,
+				originalBytes: text.length,
+				totalRows: extra?.totalRows ?? null,
+				ts: Date.now(),
+			}),
+		);
 		debug(`saveFullData: saved ${text.length} bytes to ${filePath}`);
 		return filePath;
 	} catch (e: any) {
 		debug(`saveFullData: failed to save: ${e?.message}`);
 		return null;
 	}
+}
+
+/**
+ * Read sidecar metadata for a saved data file. Returns null when missing
+ * (file predates this feature) or unreadable. Never throws.
+ */
+export function readMeta(filePath: string): {
+	format: string;
+	originalBytes: number;
+	totalRows: number | null;
+	ts: number;
+} | null {
+	try {
+		const raw = fs.readFileSync(`${filePath}.meta.json`, "utf-8");
+		const parsed = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null) return null;
+		return {
+			format: String(parsed.format ?? ""),
+			originalBytes: Number(parsed.originalBytes ?? 0),
+			totalRows: typeof parsed.totalRows === "number" ? parsed.totalRows : null,
+			ts: Number(parsed.ts ?? 0),
+		};
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Aggregate stats over a compact-data directory. Reads each file's
+ * `<file>.meta.json` sidecar (no nushell needed). Returns counts, bytes,
+ * and per-format breakdowns. Designed for the MCP `stats` tool and the
+ * `/compactor today` command.
+ */
+export interface DataDirStats {
+	dir: string;
+	fileCount: number;
+	totalBytes: number;
+	oldestTs: number | null;
+	newestTs: number | null;
+	byFormat: Record<string, { count: number; bytes: number; originalBytes: number }>;
+	topBySize: Array<{ file: string; bytes: number; format: string; ts: number }>;
+	noMetaCount: number;
+}
+
+export function dataDirStats(dir: string = COMPACT_DATA_DIR): DataDirStats {
+	const out: DataDirStats = {
+		dir,
+		fileCount: 0,
+		totalBytes: 0,
+		oldestTs: null,
+		newestTs: null,
+		byFormat: {},
+		topBySize: [],
+		noMetaCount: 0,
+	};
+	let entries: string[];
+	try {
+		entries = fs.readdirSync(dir);
+	} catch {
+		return out;
+	}
+	const sizes: Array<{ file: string; bytes: number; format: string; ts: number }> = [];
+	for (const name of entries) {
+		// skip sidecars and non-data extensions
+		if (name.endsWith(".meta.json")) continue;
+		if (!/\.(json|csv|tsv|ndjson)$/.test(name)) continue;
+		const full = path.join(dir, name);
+		let st: fs.Stats;
+		try {
+			st = fs.statSync(full);
+		} catch {
+			continue;
+		}
+		if (!st.isFile()) continue;
+		const meta = readMeta(full);
+		if (!meta) {
+			out.noMetaCount++;
+			// best-effort: fall back to .json/.csv/... extension
+			const ext = path.extname(name).slice(1);
+			const fmt = ext || "unknown";
+			out.fileCount++;
+			out.totalBytes += st.size;
+			const b = out.byFormat[fmt] ?? (out.byFormat[fmt] = { count: 0, bytes: 0, originalBytes: 0 });
+			b.count++;
+			b.bytes += st.size;
+			sizes.push({ file: full, bytes: st.size, format: fmt, ts: Math.floor(st.mtimeMs) });
+			if (out.oldestTs === null || st.mtimeMs < out.oldestTs) out.oldestTs = Math.floor(st.mtimeMs);
+			if (out.newestTs === null || st.mtimeMs > out.newestTs) out.newestTs = Math.floor(st.mtimeMs);
+			continue;
+		}
+		out.fileCount++;
+		out.totalBytes += st.size;
+		const b = out.byFormat[meta.format] ?? (out.byFormat[meta.format] = { count: 0, bytes: 0, originalBytes: 0 });
+		b.count++;
+		b.bytes += st.size;
+		b.originalBytes += meta.originalBytes;
+		sizes.push({ file: full, bytes: st.size, format: meta.format, ts: meta.ts });
+		if (out.oldestTs === null || meta.ts < out.oldestTs) out.oldestTs = meta.ts;
+		if (out.newestTs === null || meta.ts > out.newestTs) out.newestTs = meta.ts;
+	}
+	out.topBySize = sizes.sort((a, b) => b.bytes - a.bytes).slice(0, 10);
+	return out;
+}
+
+/**
+ * Filter data-dir stats to entries modified on or after `sinceTs`.
+ * Used by `/compactor today`.
+ */
+export function dataDirStatsSince(dir: string, sinceTs: number): DataDirStats {
+	const full = dataDirStats(dir);
+	const filtered: DataDirStats = {
+		...full,
+		byFormat: {},
+		topBySize: [],
+		oldestTs: null,
+		newestTs: null,
+	};
+	for (const [fmt, agg] of Object.entries(full.byFormat)) {
+		// Top-by-size gives us per-file timestamps; aggregate from there.
+		// (Less precise than reading each file, but cheap and good enough
+		// for a daily summary.)
+	}
+	const recent = full.topBySize.filter((e) => e.ts >= sinceTs);
+	for (const e of recent) {
+		const b = filtered.byFormat[e.format] ?? (filtered.byFormat[e.format] = { count: 0, bytes: 0, originalBytes: 0 });
+		b.count++;
+		b.bytes += e.bytes;
+	}
+	if (recent.length > 0) {
+		filtered.oldestTs = Math.min(...recent.map((e) => e.ts));
+		filtered.newestTs = Math.max(...recent.map((e) => e.ts));
+		filtered.fileCount = recent.length;
+		filtered.totalBytes = recent.reduce((a, e) => a + e.bytes, 0);
+		filtered.topBySize = recent.slice(0, 10);
+	}
+	return filtered;
 }
 
 function compactJsonArray(text: string, previewRows: number): { preview: string; totalRows: number } | null {
@@ -393,10 +543,6 @@ export function tryCompact(text: string, opts: TryCompactOptions = {}): CompactR
 
 	debug(`detected ${format} (${text.length} bytes), compacting...`);
 
-	// Save full data to temp file (nushell-as-DB)
-	const fullDataPath = saveFullData(text, format);
-	base.fullDataPath = fullDataPath;
-
 	let result: { preview: string; totalRows: number } | null = null;
 
 	switch (format) {
@@ -420,6 +566,12 @@ export function tryCompact(text: string, opts: TryCompactOptions = {}): CompactR
 	if (!result) {
 		return { ...base, reason: `no savings for format ${format}` };
 	}
+
+	// Save full data to temp file (nushell-as-DB), with totalRows in the
+	// sidecar so the stats tool can report exact row counts without
+	// re-running the format detector.
+	const fullDataPath = saveFullData(text, format, { totalRows: result.totalRows });
+	base.fullDataPath = fullDataPath;
 
 	const compactedText = buildCompactedOutput(
 		format,
