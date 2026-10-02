@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "acidbath",
+  "project_id": "9bad25c0-9627-484b-ad66-eccd5ce3cfad"
+}

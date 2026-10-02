@@ -1,0 +1,24 @@
+{
+  "enabled": false,
+  "keywords": [
+    {
+      "id": "ultrathink",
+      "word": "ultrathink",
+      "hint": "Use maximum careful reasoning. Do not run extra tools solely because this word appeared.",
+      "enabled": false,
+      "raiseThinking": true
+    },
+    {
+      "id": "handoff",
+      "word": "handoff",
+      "hint": "If the user wants a new focused session, they should run /handoff. Do not invent a session switch.",
+      "enabled": false
+    },
+    {
+      "id": "recap",
+      "word": "recap",
+      "hint": "If the user wants a persistent recap, they should run /recap. Do not write files.",
+      "enabled": false
+    }
+  ]
+}

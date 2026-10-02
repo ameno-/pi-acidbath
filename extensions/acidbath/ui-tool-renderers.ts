@@ -1,4 +1,4 @@
-/** Unified tool renderers with native Pi detail bodies in the transcript. */
+/** Unified tool renderers with compact summaries and lazy native detail bodies. */
 
 import { truncateToWidth as tuiTruncateToWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
@@ -7,12 +7,20 @@ import type {
 	ToolDefinition,
 	ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-type ToolMotionState = "pending" | "success" | "error";
 import { formatToolRow } from "./ui-tool-rows.js";
-import { createExpandedView } from "./rendering/expanded-views.js";
-import { DiffView } from "./rendering/diff-view.js";
+import { summarizeToolOutput, targetForTool, type ToolOutputSummary } from "./ui-tool-output.js";
 import { statusGlyph, toolGlyph, animFrame, animFrameCount, STATUS_LUMPY } from "./rendering/kaomoji.js";
 import { subscribe, currentFrame } from "./rendering/motion.js";
+
+type ToolMotionState = "pending" | "success" | "error";
+
+interface SummaryCache {
+	inputs: unknown[];
+	isPartial: boolean;
+	isError: boolean;
+	durationMs: number | undefined;
+	value: ToolOutputSummary;
+}
 
 interface ToolRowState {
 	toolCallId: string;
@@ -23,10 +31,15 @@ interface ToolRowState {
 	metadata: string[];
 	truncated: boolean;
 	settled: boolean;
-	callInvalidate?: () => void;
+	hasResult: boolean;
+	hasDetails: boolean;
+	errorLine?: string;
+	startedAt?: number;
+	endedAt?: number;
+	callComponent?: ToolRowComponent;
 	nativeDetails?: Component;
-	previewLines: string[];
-	previewHidden: number;
+	nativeState: Record<string, unknown>;
+	summaryCache?: SummaryCache;
 	/** Unsubscribe from the shared motion clock while pending. */
 	unsubscribe?: () => void;
 }
@@ -62,88 +75,86 @@ class ToolRowComponent implements Component {
 	private readonly row: ToolRowState;
 	private readonly theme: Theme;
 	private readonly noColor: boolean;
-	private readonly details: Component | undefined;
-	private readonly previewLines: string[];
-	private readonly previewHidden: number;
-	private readonly expanded: boolean;
-	/** When true, the call slot returns empty once the result is settled. */
-	private readonly isCallSlot: boolean;
+	private readonly slot: "call" | "result";
+	private details: Component | undefined;
+	private expanded = false;
+	private hidden = false;
 	private cachedWidth: number | undefined;
 	private cachedLines: string[] | undefined;
-	private cachedFrame: number = -1;
+	private cachedFrame = -1;
 
-	constructor(
-		row: ToolRowState,
-		theme: Theme,
-		noColor: boolean,
-		details: Component | undefined,
-		previewLines: readonly string[],
-		previewHidden: number,
-		expanded: boolean,
-		isCallSlot = false,
-	) {
+	constructor(row: ToolRowState, theme: Theme, noColor: boolean, slot: "call" | "result") {
 		this.row = row;
 		this.theme = theme;
 		this.noColor = noColor;
-		this.details = details;
-		this.previewLines = [...previewLines];
-		this.previewHidden = previewHidden;
-		this.expanded = expanded;
-		this.isCallSlot = isCallSlot;
+		this.slot = slot;
+	}
+
+	isSlot(slot: "call" | "result"): boolean {
+		return this.slot === slot;
+	}
+
+	update(options: { details?: Component; expanded?: boolean; hidden?: boolean } = {}): void {
+		const nextExpanded = options.expanded ?? false;
+		const nextHidden = options.hidden ?? false;
+		if (this.details === options.details && this.expanded === nextExpanded && this.hidden === nextHidden) return;
+		this.details = options.details;
+		this.expanded = nextExpanded;
+		this.hidden = nextHidden;
+		this.clearCache();
+	}
+
+	setHidden(hidden: boolean): void {
+		if (this.hidden === hidden) return;
+		this.hidden = hidden;
+		this.clearCache();
+	}
+
+	refresh(): void {
+		this.clearCache();
 	}
 
 	render(width: number): string[] {
+		if (this.hidden) return [];
 		const safeWidth = Math.max(1, Math.trunc(width));
-		// Call slot returns empty when the result is settled — prevents double rows
-		if (this.isCallSlot && this.row.settled) return [];
-
 		const frame = this.row.settled ? 0 : currentFrame();
 		if (this.cachedLines && this.cachedWidth === safeWidth && this.cachedFrame === frame) return this.cachedLines;
 
-		// ── Build kaomoji glyphs ────────────────────────────────────
 		const settled = this.row.settled;
-		const stGlyph = this.noColor ? "" : (settled ? statusGlyph(this.row.status, true) : STATUS_LUMPY);
-		const tGlyph = this.noColor ? "" : (settled ? toolGlyph(this.row.toolName) : animFrame(this.row.toolName, frame));
-
+		const status = this.noColor ? "" : (settled ? statusGlyph(this.row.status, true) : STATUS_LUMPY);
+		const tool = this.noColor ? "" : (settled ? toolGlyph(this.row.toolName) : animFrame(this.row.toolName, frame));
 		const plain = formatToolRow({
 			width: safeWidth,
-			statusGlyph: stGlyph,
-			toolGlyph: tGlyph,
+			statusGlyph: status,
+			toolGlyph: tool,
 			toolName: this.row.toolName,
 			target: this.row.target,
 			status: this.row.status,
 			metadata: this.row.metadata,
-			expandable: this.row.status !== "pending" || Boolean(this.details) || this.row.truncated,
+			expandable: this.row.hasDetails || this.row.truncated,
 			expanded: this.expanded,
 		});
 
-		// ── Apply colors ───────────────────────────────────────────
 		const lifecycleColor = this.row.status === "error" ? "error" : this.row.status === "success" ? "success" : "accent";
-		let styled: string;
-		if (this.noColor || !stGlyph || !tGlyph) {
-			styled = plain;
-		} else {
-			// kaomoji format: "(glyph) (tool) target (meta)"
-			const afterTool = plain.slice(stGlyph.length + 1 + tGlyph.length);
-			styled = `${this.theme.fg(lifecycleColor, stGlyph)} ${this.theme.fg("accent", tGlyph)}${afterTool}`;
+		let styled = plain;
+		if (!this.noColor && status && tool) {
+			const afterTool = plain.slice(status.length + 1 + tool.length);
+			styled = `${this.theme.fg(lifecycleColor, status)} ${this.theme.fg("accent", tool)}${afterTool}`;
 		}
 
 		const lines = [tuiTruncateToWidth(styled, safeWidth, "…")];
-		const indent = this.noColor ? "  " : `${this.theme.fg("dim", "  ")}`;
-		if (!this.expanded && this.previewLines.length > 0) {
-			const previewColor = this.row.status === "error" ? "error" : "toolOutput";
-			for (const previewLine of this.previewLines) {
-				const preview = `${this.theme.fg("dim", "  ")}${this.theme.fg(previewColor, previewLine)}`;
-				lines.push(tuiTruncateToWidth(`${indent}${preview}`, safeWidth, "…"));
-			}
-			if (this.previewHidden > 0) {
-				const noun = this.previewHidden === 1 ? "line" : "lines";
-				lines.push(tuiTruncateToWidth(`${indent}${this.theme.fg("dim", "  … ")}${this.previewHidden} more ${noun} · expand`, safeWidth, "…"));
-			}
+		const indent = "  ";
+		if (!this.expanded && this.row.status === "error" && this.row.errorLine) {
+			const diagnostic = `${indent}${this.noColor ? "error: " : this.theme.fg("error", "error: ")}${this.noColor ? this.row.errorLine : this.theme.fg("toolOutput", this.row.errorLine)}`;
+			lines.push(tuiTruncateToWidth(diagnostic, safeWidth, "…"));
 		}
 		if (this.expanded && this.details) {
-			for (const line of this.details.render(safeWidth)) lines.push(tuiTruncateToWidth(`${indent}${line}`, safeWidth, "…"));
+			const detailWidth = Math.max(1, safeWidth - indent.length);
+			for (const line of this.details.render(detailWidth)) {
+				lines.push(tuiTruncateToWidth(`${indent}${line}`, safeWidth, "…"));
+			}
 		}
+
 		this.cachedWidth = safeWidth;
 		this.cachedFrame = frame;
 		this.cachedLines = lines;
@@ -151,16 +162,19 @@ class ToolRowComponent implements Component {
 	}
 
 	invalidate(): void {
+		this.clearCache();
+		this.details?.invalidate();
+	}
+
+	private clearCache(): void {
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
-		this.details?.invalidate();
+		this.cachedFrame = -1;
 	}
 }
 
 function rendererState(context: AnyRendererContext): AcidbathRendererState {
 	if (context.state && typeof context.state === "object") return context.state as AcidbathRendererState;
-	// Pi initializes renderer state as an object. Keep a defensive fallback for
-	// alternate hosts that provide an absent state value.
 	return {};
 }
 
@@ -184,23 +198,35 @@ function getOrCreateRow(
 		metadata: ["pending"],
 		truncated: false,
 		settled: false,
-		previewLines: [],
-		previewHidden: 0,
-		unsubscribe: undefined,
+		hasResult: false,
+		hasDetails: false,
+		nativeState: {},
 	};
-	// Subscribe to animation clock while pending (kaomoji animation frames)
-	if (animFrameCount(toolName) > 0) {
-		row.unsubscribe = subscribe(context.toolCallId, () => {
-			context.invalidate();
-		});
-	}
 	state.acidbathToolRow = row;
 	return row;
 }
 
+function ensureMotion(row: ToolRowState, context: AnyRendererContext, animate: boolean): void {
+	if (!animate || !context.executionStarted || row.hasResult || row.unsubscribe || animFrameCount(row.toolName) === 0) return;
+	row.unsubscribe = subscribe(context.toolCallId, context.invalidate);
+}
+
+function reusableComponent(
+	context: AnyRendererContext,
+	row: ToolRowState,
+	theme: Theme,
+	noColor: boolean,
+	slot: "call" | "result",
+): ToolRowComponent {
+	const previous = context.lastComponent;
+	return previous instanceof ToolRowComponent && previous.isSlot(slot)
+		? previous
+		: new ToolRowComponent(row, theme, noColor, slot);
+}
+
 /**
- * Build the one Acidbath presentation policy: one lifecycle row per call,
- * with Pi's native domain renderer retained as the result body.
+ * Build one stable summary row per call. Collapsed results never parse or
+ * render raw output; Pi's domain renderer is created lazily on expansion.
  */
 export function createCompactToolRenderers(
 	definition: AnyToolDefinition,
@@ -208,18 +234,31 @@ export function createCompactToolRenderers(
 	options: CompactToolRendererOptions,
 ): Pick<AnyToolDefinition, "renderCall" | "renderResult"> {
 	const { noColor, reducedMotion } = options;
+	const animate = !noColor && !reducedMotion;
+	const definitionsByCwd = new Map<string, AnyToolDefinition>();
+
+	const nativeDefinition = (cwd: string): AnyToolDefinition => {
+		const cached = definitionsByCwd.get(cwd);
+		if (cached) return cached;
+		const created = factory(cwd);
+		definitionsByCwd.set(cwd, created);
+		return created;
+	};
 
 	return {
 		renderCall(args: unknown, theme: Theme, context: AnyRendererContext): Component {
 			const row = getOrCreateRow(context, definition.name, args as Record<string, unknown>);
-			// A call slot remains pending until its result slot settles. Once
-			// settled, do not reinstall its invalidation callback during redraw.
-			if (!row.settled) {
+			if (context.executionStarted && row.startedAt === undefined) row.startedAt = Date.now();
+			ensureMotion(row, context, animate);
+			if (!row.hasResult) {
 				row.status = context.isError ? "error" : "pending";
 				row.target = targetForTool(definition.name, row.args);
-				row.callInvalidate = context.invalidate;
 			}
-			return new ToolRowComponent(row, theme, noColor, undefined, [], 0, false, true);
+			const component = reusableComponent(context, row, theme, noColor, "call");
+			component.update({ hidden: row.hasResult });
+			component.refresh();
+			row.callComponent = component;
+			return component;
 		},
 
 		renderResult(
@@ -229,137 +268,128 @@ export function createCompactToolRenderers(
 			context: AnyRendererContext,
 		): Component {
 			const row = getOrCreateRow(context, definition.name, context.args as Record<string, unknown>);
+			row.hasResult = true;
+			row.callComponent?.setHidden(true);
 			row.status = context.isError ? "error" : resultOptions.isPartial ? "pending" : "success";
 			row.settled = !resultOptions.isPartial;
 			row.target = targetForTool(definition.name, row.args);
-			row.metadata = resultOptions.isPartial
-				? ["running"]
-				: metadataForTool(definition.name, row.args, result as Record<string, unknown>);
-			row.truncated = hasTruncation(result as Record<string, unknown>);
+			if (row.settled && row.endedAt === undefined) row.endedAt = Date.now();
 
-			// Expanded rows never display the compact preview. Avoid repeatedly
-			// splitting large streaming results that Pi will render natively.
-			const preview = resultOptions.expanded ? { lines: [], hidden: 0 } : previewForResult(definition.name, result);
-			row.previewLines = preview.lines;
-			row.previewHidden = preview.hidden;
-			if (row.status !== "pending") {
-				const invalidateCall = row.callInvalidate;
-				row.callInvalidate = undefined;
-				if (invalidateCall) queueMicrotask(invalidateCall);
-			}
+			const durationMs = row.startedAt !== undefined && row.endedAt !== undefined
+				? Math.max(0, row.endedAt - row.startedAt)
+				: undefined;
+			const summary = summarizeCached(row, result as Record<string, unknown>, {
+				isPartial: resultOptions.isPartial,
+				isError: context.isError,
+				durationMs,
+			});
+			row.metadata = summary.metadata;
+			row.hasDetails = summary.hasDetails;
+			row.errorLine = summary.errorLine;
+			row.truncated = summary.metadata.includes("truncated");
 
-			// Unsubscribe from animation clock when settled
-			if (!resultOptions.isPartial && row.unsubscribe) {
+			if (row.settled && row.unsubscribe) {
 				row.unsubscribe();
 				row.unsubscribe = undefined;
 			}
 
-			// Expanded detail view: Acidbath custom views preferred, fall back to Pi's native.
-			if (resultOptions.expanded) {
-				const resultRecord = result as Record<string, unknown>;
-				const acidbathView = createExpandedView(definition.name, resultRecord, theme, noColor);
-				if (acidbathView) {
-					row.nativeDetails = acidbathView;
-				} else if (definition.name === "edit" || definition.name === "write") {
-					const content = extractContentForDiff(resultRecord);
-					if (content) {
-						const details = isRecord(resultRecord.details) ? resultRecord.details as Record<string, unknown> : {};
-						const added = numberValue(details.added ?? details.addedLines);
-						const removed = numberValue(details.removed ?? details.removedLines);
-						const stats = (added !== undefined || removed !== undefined)
-							? `+${Math.round(added ?? 0)} -${Math.round(removed ?? 0)}`
-							: "";
-						row.nativeDetails = new DiffView(content, theme, noColor, stats);
+			if (resultOptions.expanded && row.settled) {
+				const runtime = nativeDefinition(context.cwd);
+				try {
+					if (definition.name === "write" && !context.isError && runtime.renderCall) {
+						row.nativeDetails = runtime.renderCall(context.args, theme, {
+							...context,
+							lastComponent: row.nativeDetails,
+							state: row.nativeState,
+						});
+					} else if (runtime.renderResult) {
+						row.nativeDetails = runtime.renderResult(result, resultOptions, theme, {
+							...context,
+							lastComponent: row.nativeDetails,
+							state: row.nativeState,
+						});
 					}
-				} else {
-					// Fall back to Pi's native renderer
-					const runtimeDefinition = factory(context.cwd);
-					if (runtimeDefinition.renderResult) {
-						try {
-							row.nativeDetails = runtimeDefinition.renderResult(result, resultOptions, theme, {
-								...context,
-								lastComponent: row.nativeDetails,
-							});
-						} catch {
-							row.nativeDetails = undefined;
-						}
-					}
+				} catch {
+					row.nativeDetails = undefined;
 				}
 			}
-			return new ToolRowComponent(row, theme, noColor, row.nativeDetails, row.previewLines, row.previewHidden, resultOptions.expanded);
+
+			const component = reusableComponent(context, row, theme, noColor, "result");
+			component.update({
+				details: resultOptions.expanded ? row.nativeDetails : undefined,
+				expanded: resultOptions.expanded,
+			});
+			component.refresh();
+			return component;
 		},
 	};
 }
 
-function previewForResult(toolName: string, result: Record<string, unknown>): { lines: string[]; hidden: number } {
-	const details = isRecord(result.details) ? result.details : {};
-	const displayContent = isRecord(details.displayContent) ? details.displayContent.text : undefined;
-	const content = typeof displayContent === "string"
-		? displayContent
-		: Array.isArray(result.content)
-			? result.content
-				.filter((part): part is Record<string, unknown> => isRecord(part) && part.type === "text" && typeof part.text === "string")
-				.map((part) => part.text as string)
-				.join("\n")
-			: "";
-	if (!content.trim()) return { lines: [], hidden: 0 };
+function summarizeCached(
+	row: ToolRowState,
+	result: Record<string, unknown>,
+	options: { isPartial: boolean; isError: boolean; durationMs?: number },
+): ToolOutputSummary {
+	if (options.isPartial) return summarizeToolOutput(row.toolName, row.args, result, options);
+	const inputs = summaryInputs(row.args, result);
+	const cached = row.summaryCache;
+	if (
+		cached
+		&& sameInputs(cached.inputs, inputs)
+		&& cached.isPartial === options.isPartial
+		&& cached.isError === options.isError
+		&& cached.durationMs === options.durationMs
+	) return cached.value;
 
-	const rawLines = content.replace(/\r\n?/g, "\n").split("\n");
-	const lines = rawLines.map((line) => line.replace(/[\t]+/g, "    ").trimEnd());
-	while (lines.length > 0 && lines[0]!.trim() === "") lines.shift();
-	while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
-	const limit = 4;
-	const visible = toolName === "bash" ? lines.slice(-limit) : lines.slice(0, limit);
-	const hidden = Math.max(0, lines.length - visible.length);
-	return { lines: visible, hidden };
+	const value = summarizeToolOutput(row.toolName, row.args, result, options);
+	row.summaryCache = {
+		inputs,
+		isPartial: options.isPartial,
+		isError: options.isError,
+		durationMs: options.durationMs,
+		value,
+	};
+	return value;
 }
 
-function targetForTool(toolName: string, args: Record<string, unknown>): string {
-	const value = toolName === "bash"
-		? args.command
-		: args.path ?? args.file_path ?? args.pattern ?? args.directory ?? args.query;
-	return cleanInline(typeof value === "string" ? value : "");
+function summaryInputs(args: Record<string, unknown>, result: Record<string, unknown>): unknown[] {
+	const inputs: unknown[] = [args.path, args.file_path, args.content];
+	if (Array.isArray(result.content)) {
+		for (const part of result.content) {
+			if (part && typeof part === "object") {
+				const record = part as Record<string, unknown>;
+				inputs.push(record.type, record.text);
+			}
+		}
+	}
+	const details = result.details && typeof result.details === "object"
+		? result.details as Record<string, unknown>
+		: {};
+	const truncation = details.truncation && typeof details.truncation === "object"
+		? details.truncation as Record<string, unknown>
+		: {};
+	inputs.push(
+		Object.keys(details).sort().join(","),
+		details.matchCount,
+		details.matchLimitReached,
+		details.resultCount,
+		details.resultLimitReached,
+		details.entryCount,
+		details.entryLimitReached,
+		details.linesTruncated,
+		details.added,
+		details.addedLines,
+		details.removed,
+		details.removedLines,
+		details.diff,
+		truncation.truncated,
+		truncation.outputLines,
+		truncation.totalLines,
+		truncation.truncatedBy,
+	);
+	return inputs;
 }
 
-function metadataForTool(toolName: string, args: Record<string, unknown>, result: Record<string, unknown>): string[] {
-	const details = isRecord(result.details) ? result.details : {};
-	const metadata: string[] = [];
-	const exitCode = numberValue(details.exitCode ?? result.exitCode);
-	if (toolName === "bash" && exitCode !== undefined) metadata.push(`exit ${exitCode}`);
-	const lines = numberValue(details.lines ?? details.lineCount ?? details.matchCount ?? details.entryCount);
-	if (lines !== undefined) metadata.push(`${Math.round(lines)} ${toolName === "grep" ? "matches" : "lines"}`);
-	const added = numberValue(details.added ?? details.addedLines);
-	const removed = numberValue(details.removed ?? details.removedLines);
-	if (added !== undefined || removed !== undefined) metadata.push(`+${Math.round(added ?? 0)} -${Math.round(removed ?? 0)}`);
-	if (hasTruncation(result)) metadata.push("truncated");
-	if (metadata.length === 0 && toolName === "bash" && typeof args.command === "string") metadata.push("completed");
-	return metadata;
-}
-
-function hasTruncation(result: Record<string, unknown>): boolean {
-	const details = isRecord(result.details) ? result.details : result;
-	const truncation = isRecord(details.truncation) ? details.truncation : undefined;
-	return details.truncated === true || truncation?.truncated === true || truncation?.truncatedByBytes === true || truncation?.truncatedByLines === true;
-}
-
-function numberValue(value: unknown): number | undefined {
-	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, any> {
-	return typeof value === "object" && value !== null;
-}
-
-function extractContentForDiff(result: Record<string, unknown>): string {
-	const content = Array.isArray(result.content)
-		? result.content
-			.filter((part): part is Record<string, unknown> => typeof part === "object" && part !== null && part.type === "text")
-			.map((part) => String(part.text ?? ""))
-			.join("\n")
-		: "";
-	return content.replace(/\r\n?/g, "\n").trim();
-}
-
-function cleanInline(value: string): string {
-	return value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+function sameInputs(left: readonly unknown[], right: readonly unknown[]): boolean {
+	return left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
 }

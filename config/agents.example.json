@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "maxConcurrency": 4,
+  "profiles": [
+    {
+      "name": "scout",
+      "description": "Read-only reconnaissance agent. Finds files, grep, summarize.",
+      "role": "task",
+      "instructions": "You are scout. Inspect the repository with read/grep/find/ls only. Return a concise summary; no edits, no writes.",
+      "tools": ["read", "grep", "find", "ls"],
+      "cwdPolicy": "session",
+      "timeoutMs": 120000,
+      "maxOutputChars": 50000,
+      "allowNested": false,
+      "source": "builtin"
+    },
+    {
+      "name": "reviewer",
+      "description": "Second-opinion review agent. Read-only, advisory output.",
+      "role": "advisor",
+      "instructions": "You are reviewer. Read the provided context and emit a concise advisory verdict. Do not run side-effect tools.",
+      "tools": ["read", "grep"],
+      "cwdPolicy": "session",
+      "timeoutMs": 120000,
+      "maxOutputChars": 50000,
+      "allowNested": false,
+      "source": "builtin"
+    }
+  ]
+}

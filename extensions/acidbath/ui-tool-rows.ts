@@ -30,7 +30,7 @@ export function formatToolRow(input: ToolRowFormatInput): string {
     : `${status}${tool} ${target}`;
   const metadata = [...(input.metadata ?? [])].map(clean).filter(Boolean);
   if (input.expandable && !input.expanded) metadata.push("expand");
-  return truncate(metadata.length === 0 ? required : `${required} (${metadata.join(", ")})`, width);
+  return truncate(metadata.length === 0 ? required : `${required} · ${metadata.join(" · ")}`, width);
 }
 
 /** NO_COLOR fallback: plain text status when kaomoji not available. */
@@ -47,9 +47,12 @@ function truncate(value: string, width: number): string {
   if (toolRowVisibleWidth(value) <= width) return value;
   if (width <= 1) return "…";
   let output = "";
+  let used = 0;
   for (const character of Array.from(value)) {
-    if (toolRowVisibleWidth(output) + characterWidth(character) > width - 1) break;
+    const next = characterWidth(character);
+    if (used + next > width - 1) break;
     output += character;
+    used += next;
   }
   return `${output}…`;
 }
