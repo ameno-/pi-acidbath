@@ -27,6 +27,7 @@ import { AcidbathHeader } from "./ui-header.js";
 import { DEFAULT_SESSION_SUMMARY, summarizeTask } from "./ui-summary.js";
 import { activityKindForState, INITIAL_LIFECYCLE_STATE, reduceLifecycle, StatusTimingRecorder, type LifecycleState } from "./ui-lifecycle.js";
 import { registerToolRenderers } from "./ui-tools.js";
+import { dispose as disposeToolMotion } from "./rendering/motion.js";
 import { synthesizeLabel, type LabelInput } from "./ui-labels.js";
 import {
 	createTokenContextState,
@@ -460,6 +461,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		disposeToolMotion();
 		const ui = workingUi(ctx);
 		ui.setWorkingVisible?.(true);
 		activityStatusWidget?.dispose();

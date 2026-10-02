@@ -9,7 +9,7 @@ UI-focused pieces extracted from `pi-herdr`:
 
 - One transient lifecycle activity rail above the editor for listening, reasoning, composing, and tool work
 - Dynamic ten-word session summary pinned to the active Pi header
-- Deterministic built-in tool rows in Pi's native transcript, with native expanded details
+- Deterministic built-in tool rows in Pi's native transcript: semantic one-line summaries while collapsed, with Pi's rich native details created only on expansion
 - Footer identity rail: gray working directory, red model name, and the current Git branch in place of the less-actionable thinking label
 - Welcome-only Stoic quote card plus a native-cost model card showing model name, input/output price per million tokens, and thinking level; spend tiers use green/blue/red
 - Borderless editor with a static, stylized input prompt and a right-side context rail
@@ -115,7 +115,7 @@ by Pi extensions; select Iosevka in your terminal profile if desired. See
 
 Optional environment toggle:
 
-- `PI_ACIDBATH_REDUCED_MOTION=1` — disable the activity rail pulse.
+- `PI_ACIDBATH_REDUCED_MOTION=1` — disable the activity rail pulse and pending tool-row animation.
 
 ## Commands
 
@@ -146,4 +146,4 @@ pi install npm:acidbath@0.1.0
 - Keybindings template: `config/keybindings.example.json`
 - Themes: `themes/acidbath.json`, `themes/acidbath-cyberdyne-teal.json`
 
-The startup header is implemented locally in `extensions/acidbath/ui-header.ts`: it renders a large centered `ACIDBATH` wordmark, derives a smooth gradient from the active theme's `accent` color, clips safely to narrow terminals, and falls back to plain text when `NO_COLOR` is set. The above-editor welcome is intentionally transient: it shows cwd, a native-cost model card with thinking level, compact preflight status, and one centered yellow Stoic message with its author, then dismisses before the first agent turn. Updates are opt-in through `/acidbath-update`; Acidbath never updates Pi automatically. `pi-research` and `pi-web-access` are loaded as first-party package capabilities. AGY can operate without direct extraction tools, while the primary Pi can follow research URLs with `fetch_content` and `source_check`. AGY still requires a locally authenticated CLI; Acidbath never installs AGY or silently grants `command(*)` permissions. Use `/agy-setup` only after reviewing and explicitly confirming that permission change. The footer owns identity, branch, context, and token usage; the activity rail is the only animated lifecycle surface. Tool rows are renderer-only: external tools and Herdr/shell actions are not intercepted or executed, while completed built-in results remain in Pi's native transcript. Acidbath preserves Pi's current tool-expansion preference rather than forcing large native results open on every render.
+The startup header is implemented locally in `extensions/acidbath/ui-header.ts`: it renders a large centered `ACIDBATH` wordmark, derives a smooth gradient from the active theme's `accent` color, clips safely to narrow terminals, and falls back to plain text when `NO_COLOR` is set. The above-editor welcome is intentionally transient: it shows cwd, a native-cost model card with thinking level, compact preflight status, and one centered yellow Stoic message with its author, then dismisses before the first agent turn. Updates are opt-in through `/acidbath-update`; Acidbath never updates Pi automatically. `pi-research` and `pi-web-access` are loaded as first-party package capabilities. AGY can operate without direct extraction tools, while the primary Pi can follow research URLs with `fetch_content` and `source_check`. AGY still requires a locally authenticated CLI; Acidbath never installs AGY or silently grants `command(*)` permissions. Use `/agy-setup` only after reviewing and explicitly confirming that permission change. The footer owns identity, branch, context, and token usage; the activity rail is the only animated lifecycle surface. Tool rows are renderer-only: external tools and Herdr/shell actions are not intercepted or executed. Collapsed built-in results render one cached semantic row (for example, `skill acidbath-operator · 149 lines · expand`) instead of raw output; Pi's native syntax highlighting, diffs, and diagnostics are created lazily when expanded. Acidbath preserves Pi's current tool-expansion preference rather than forcing large native results open on every render.
