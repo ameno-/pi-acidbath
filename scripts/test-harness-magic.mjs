@@ -469,6 +469,111 @@ run("setMagicKeywordEnabled rejects unknown ids and turns matching on", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Fence masking: unterminated and tilde fences
+// ---------------------------------------------------------------------------
+
+const FENCE_REG = parseMagicRegistry({
+	enabled: true,
+	keywords: [{ id: "plan", word: "plan", hint: "H", enabled: true }],
+});
+
+run("fences — terminated backtick fence masks its body", () => {
+	const prompt = "```\nplan this\n```";
+	assert("fence.closed", matchMagicWords(prompt, FENCE_REG).length === 0);
+});
+
+run("fences — UNTERMINATED backtick fence masks to end of prompt", () => {
+	// The old ```...``` regex matched nothing here, so keywords inside the
+	// code leaked through as if they were prose.
+	const prompt = "```\nplan this";
+	assert("fence.unterminated", matchMagicWords(prompt, FENCE_REG).length === 0);
+});
+
+run("fences — tilde fences are recognized", () => {
+	assert("fence.tilde", matchMagicWords("~~~\nplan this\n~~~", FENCE_REG).length === 0);
+	assert("fence.tilde.unterminated", matchMagicWords("~~~\nplan this", FENCE_REG).length === 0);
+});
+
+run("fences — indented and info-string variants", () => {
+	assert("fence.indented", matchMagicWords("   ```\nplan\n   ```", FENCE_REG).length === 0);
+	assert("fence.lang", matchMagicWords("```ts\nplan\n```", FENCE_REG).length === 0);
+	assert("fence.tilde.lang", matchMagicWords("~~~json\nplan\n~~~", FENCE_REG).length === 0);
+});
+
+run("fences — prose outside the fence still matches", () => {
+	assert(
+		"fence.prose.before",
+		matchMagicWords("plan first\n```\nplan hidden", FENCE_REG).length === 1,
+	);
+	assert(
+		"fence.prose.after",
+		matchMagicWords("```\nplan hidden\n```\nplan again", FENCE_REG).length === 1,
+	);
+});
+
+run("fences — a shorter inner run does not close the fence", () => {
+	// CommonMark: a closing fence must be at least as long as its opener.
+	const prompt = "````\nplan\n```\nstill hidden\n````";
+	assert("fence.inner.shorter", matchMagicWords(prompt, FENCE_REG).length === 0);
+});
+
+run("fences — a tilde run does not close a backtick fence", () => {
+	const prompt = "```\nplan\n~~~\nstill hidden\n```";
+	assert("fence.cross", matchMagicWords(prompt, FENCE_REG).length === 0);
+});
+
+run("fences — two independent blocks", () => {
+	const prompt = "plan outside\n```\nplan hidden\n```\nand\n~~~\nplan hidden2\n~~~\nplan outside2";
+	const r = matchMagicWords(prompt, FENCE_REG);
+	assert("fence.two.blocks", r.length === 1, `got=${r.length}`);
+});
+
+run("fences — inline code still masked after the change", () => {
+	assert("fence.inline", matchMagicWords("use `plan` here", FENCE_REG).length === 0);
+});
+
+// ---------------------------------------------------------------------------
+// Disable semantics
+// ---------------------------------------------------------------------------
+
+run("disable — disabling the last enabled keyword turns matching off", () => {
+	let reg = parseMagicRegistry({
+		enabled: true,
+		keywords: [
+			{ id: "a", word: "alpha", hint: "A", enabled: true },
+			{ id: "b", word: "beta", hint: "B", enabled: true },
+		],
+	});
+	reg = setMagicKeywordEnabled(reg, "b", false);
+	assert("disable.stillOther", reg.enabled === true, `got=${reg.enabled}`);
+	reg = setMagicKeywordEnabled(reg, "a", false);
+	assert("disable.last.off", reg.enabled === false, `registry still claims enabled`);
+	assert("disable.last.noMatch", matchMagicWords("alpha", reg).length === 0);
+});
+
+run("disable — enabling a keyword turns matching on", () => {
+	let reg = parseMagicRegistry({
+		enabled: false,
+		keywords: [{ id: "a", word: "alpha", hint: "A", enabled: false }],
+	});
+	reg = setMagicKeywordEnabled(reg, "a", true);
+	assert("enable.turnsOn", reg.enabled === true);
+	assert("enable.matches", matchMagicWords("alpha", reg).length === 1);
+});
+
+run("disable — mutators do not alias the input registry", () => {
+	const original = parseMagicRegistry({
+		enabled: true,
+		keywords: [{ id: "a", word: "alpha", hint: "A", enabled: true }],
+	});
+	const snapshot = JSON.stringify(original);
+	setMagicKeywordEnabled(original, "a", false);
+	removeMagicKeyword(original, "a");
+	addMagicKeyword(original, { word: "gamma" });
+	assert("disable.noAlias", JSON.stringify(original) === snapshot, "input registry mutated");
+});
+
+// ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------
 

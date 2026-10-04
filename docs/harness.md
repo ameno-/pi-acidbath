@@ -21,8 +21,25 @@ Tracked as Beads `acidbath-9ih` / Linear [MIGHT-493](https://linear.app/acids/is
 | `/role info <alias>` | Full detail for one role: resolved model line, cost/context, thinking, tools, availability, fallback/cycle membership. |
 | `/role clear` | Restore the pre-role model, thinking level, and tools snapshot. |
 | `/role resolve <alias>` | Dry-run resolution without switching. |
-| `/magic list\|add <word> [--raise] [hint]\|remove <id>\|enable <id>\|disable <id>` | Add exact-prose keywords. Adding or enabling a word turns matching on. |
+| `/magic list\|add <word> [--raise] [hint]\|remove <id>\|enable <id>\|disable <id>` | Add exact-prose keywords. Adding or enabling a word turns matching on; disabling the last enabled word turns it off. |
 | `/agents [list\|run <name> <task>]` | Core subagent substrate, no delegation policy. |
+
+### Magic words
+
+Keywords match only as exact lowercase standalone prose tokens. Fenced code
+is ignored in every form — backtick and tilde fences, indented and
+info-string variants, and fences left unterminated mid-edit, which mask to
+the end of the prompt rather than leaking their contents as prose. Inline
+code, paths, file extensions, and HTML tag spans are masked too, while
+ordinary prose and identifiers that merely contain a keyword (`task-item`,
+`risk-analysis.py`) are left alone.
+
+A matched keyword appends `[magic:<id>] <hint>` to the system prompt; the
+user's text is never modified. Hints never outlive their turn: both `input`
+and `agent_settled` reset pending matches, so an aborted turn cannot leak
+its hints into a later, unrelated prompt. A keyword marked `raiseThinking`
+lifts the level to `high` for that turn and restores the previous level when
+the turn settles.
 
 ### Role workflow
 

@@ -583,8 +583,12 @@ export default function harness(pi: ExtensionAPI): void {
 
 	// ─── input: transform exact-prose magic matches ───────────────────
 	pi.on("input", async (event, _ctx) => {
-		const matches = matchMagicWords(event.text, magicState.registry);
-		magicState.pendingMatches = matches;
+		// Every turn begins with an `input` event, so this is the one place
+		// guaranteed to run between turns. Assigning (rather than
+		// accumulating) also drops anything a previous turn left behind: if
+		// that turn was aborted before `before_agent_start` consumed it, its
+		// hints would otherwise be injected into an unrelated later prompt.
+		magicState.pendingMatches = matchMagicWords(event.text, magicState.registry);
 		// Unchanged text per ADR-0004 — hints are appended in before_agent_start.
 		return { action: "transform", text: event.text, images: event.images };
 	});
@@ -621,6 +625,10 @@ export default function harness(pi: ExtensionAPI): void {
 			pi.setThinkingLevel(prior);
 			magicState.priorThinkingLevel = undefined;
 		}
+		// A turn can settle without `before_agent_start` ever consuming its
+		// matches (aborted input). Drop the leftovers here too, so they
+		// cannot reach the next turn.
+		magicState.pendingMatches = [];
 	});
 
 	// ─── /magic ───────────────────────────────────────────────────────
