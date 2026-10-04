@@ -129,7 +129,7 @@ function parseThinkingSuffix(suffix: string, original: string): ThinkingLevel {
 
 // ─── registry parsing + validation ───────────────────────────────────────
 
-function isThinkingLevel(value: unknown): value is ThinkingLevel {
+export function isThinkingLevel(value: unknown): value is ThinkingLevel {
 	if (typeof value !== "string") return false;
 	for (const lvl of THINKING_LEVELS) {
 		if (lvl === value) return true;
@@ -253,6 +253,31 @@ export function parseRoleRegistry(input: unknown): RoleRegistry {
  * template; this is what runtime callers fall back to when no
  * PI_ACIDBATH_ROLES_PATH is set.
  */
+/** Add or replace a concrete role. Does not mutate the input registry. */
+export function upsertRole(registry: RoleRegistry, spec: RoleSpec): RoleRegistry {
+	const aliases = registry.aliases.some((alias) => alias.alias === spec.alias)
+		? registry.aliases.map((alias) => alias.alias === spec.alias ? spec : alias)
+		: [...registry.aliases, spec];
+	return parseRoleRegistry({ version: 1, aliases, fallback: registry.fallback });
+}
+
+/** Remove a role that is not referenced by another role. Does not mutate the input registry. */
+export function removeRole(registry: RoleRegistry, alias: string): RoleRegistry {
+	if (!registry.aliases.some((spec) => spec.alias === alias)) {
+		throw new RangeError(`role "${alias}" does not exist`);
+	}
+	if (registry.aliases.some((spec) => spec.ref === alias)) {
+		throw new RangeError(`role "${alias}" is referenced by another role`);
+	}
+	const aliases = registry.aliases.filter((spec) => spec.alias !== alias);
+	if (aliases.length === 0) throw new RangeError("cannot remove the last role");
+	return parseRoleRegistry({
+		version: 1,
+		aliases,
+		fallback: registry.fallback.filter((name) => name !== alias),
+	});
+}
+
 export function defaultRoleRegistry(): RoleRegistry {
 	return parseRoleRegistry({
 		version: 1,
@@ -524,4 +549,326 @@ export function describeResolution(resolution: RoleResolution): string {
 		case "error":
 			return `role error (${resolution.reason}): ${resolution.message}`;
 	}
+}
+
+// ─── model catalog (PURE) ────────────────────────────────────────────────
+
+/**
+ * Metadata for one available model, decoupled from Pi's Model type so
+ * this module stays import-free and unit-testable. The Pi-coupled glue
+ * fills these from `ctx.modelRegistry`.
+ */
+export type ModelInfo = {
+	provider: string;
+	id: string;
+	/** Human-readable model name; falls back to the id when absent. */
+	name?: string;
+	contextWindow?: number;
+	maxTokens?: number;
+	/** Whether the model supports reasoning/thinking levels. */
+	reasoning?: boolean;
+	/** Whether the model accepts image input. */
+	vision?: boolean;
+	/** USD per million input tokens. */
+	costIn?: number;
+	/** USD per million output tokens. */
+	costOut?: number;
+};
+
+/** Format a token count the way `pi models` does (200000 → "200K"). */
+export function formatTokenCount(count: number): string {
+	if (!Number.isFinite(count) || count <= 0) return "?";
+	if (count >= 1_000_000) {
+		const millions = count / 1_000_000;
+		return millions % 1 === 0 ? `${millions}M` : `${millions.toFixed(1)}M`;
+	}
+	if (count >= 1_000) {
+		const thousands = count / 1_000;
+		return thousands % 1 === 0 ? `${thousands}K` : `${thousands.toFixed(1)}K`;
+	}
+	return String(count);
+}
+
+function formatUsd(value: number): string {
+	if (value <= 0) return "$0";
+	if (value < 0.1) return `$${value.toFixed(4).replace(/0+$/, "")}`;
+	return `$${value.toFixed(2)}`;
+}
+
+/**
+ * Cost summary per million tokens. Zero/absent rates mean the catalog
+ * has no pricing for the model (common for proxies and local servers),
+ * so the summary says so rather than claiming "free".
+ */
+export function formatCostPerMtok(costIn: number, costOut: number): string {
+	if (costIn <= 0 && costOut <= 0) return "cost n/a";
+	return `${formatUsd(costIn)}/${formatUsd(costOut)} per Mtok`;
+}
+
+/** One-line catalog entry: `provider/id — Name — 200K ctx · $3/$15 per Mtok · reasoning · vision`. */
+export function formatModelLine(info: ModelInfo): string {
+	const segments: string[] = [`${info.provider}/${info.id}`];
+	if (info.name && info.name !== info.id) segments.push(info.name);
+	const caps: string[] = [];
+	if (typeof info.contextWindow === "number" && info.contextWindow > 0) {
+		caps.push(`${formatTokenCount(info.contextWindow)} ctx`);
+	}
+	const costIn = info.costIn ?? 0;
+	const costOut = info.costOut ?? 0;
+	if (costIn > 0 || costOut > 0) caps.push(formatCostPerMtok(costIn, costOut));
+	if (info.reasoning) caps.push("reasoning");
+	if (info.vision) caps.push("vision");
+	if (caps.length > 0) segments.push(caps.join(" · "));
+	return segments.join(" — ");
+}
+
+/**
+ * Single-line picker label for a model (the Pi selector renders each
+ * option as one line, so this must never contain newlines). Truncated
+ * with an ellipsis at `maxLen`.
+ */
+export function formatModelPickerLabel(info: ModelInfo, maxLen = 100): string {
+	const line = formatModelLine(info);
+	return line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line;
+}
+
+export type ModelSearch = { matches: ModelInfo[]; total: number };
+
+/**
+ * Case-insensitive search across provider/id/name. Exact references
+ * rank first, then id-prefix hits, then full-reference prefix, then
+ * substring, then name hits; ties fall back to provider/id
+ * alphabetical order.
+ */
+export function searchModelInfos(models: ReadonlyArray<ModelInfo>, query: string): ModelSearch {
+	const q = query.trim().toLowerCase();
+	if (!q) return { matches: [...models], total: models.length };
+	const scored: Array<{ info: ModelInfo; score: number; ref: string }> = [];
+	for (const info of models) {
+		const ref = `${info.provider}/${info.id}`.toLowerCase();
+		const name = (info.name ?? "").toLowerCase();
+		let score: number;
+		if (ref === q || info.id.toLowerCase() === q) score = 0;
+		else if (info.id.toLowerCase().startsWith(q)) score = 1;
+		else if (ref.startsWith(q)) score = 2;
+		else if (ref.includes(q)) score = 3;
+		else if (name.includes(q)) score = 4;
+		else continue;
+		scored.push({ info, score, ref });
+	}
+	scored.sort((a, b) => a.score - b.score || a.ref.localeCompare(b.ref));
+	return { matches: scored.map((s) => s.info), total: models.length };
+}
+
+/**
+ * Thinking levels a model supports, from its optional provider-level
+ * map (pi-ai `ThinkingLevelMap` shape). A `null` value marks an
+ * unsupported level; absent keys and absent maps mean "all levels".
+ * An all-null map is treated as unknown metadata, not an unusable
+ * model.
+ */
+export function supportedThinkingLevels(
+	map: Readonly<Partial<Record<ThinkingLevel, string | null>>> | undefined,
+): ThinkingLevel[] {
+	if (!map) return [...THINKING_LEVELS];
+	const out: ThinkingLevel[] = [];
+	for (const lvl of THINKING_LEVELS) {
+		if (map[lvl] === null) continue;
+		out.push(lvl);
+	}
+	return out.length > 0 ? out : [...THINKING_LEVELS];
+}
+
+// ─── direct model selectors ─────────────────────────────────────────────
+
+export type DirectModelSelector = { provider: string; model: string; thinkingLevel?: ThinkingLevel };
+
+/**
+ * True when a `/role` selector is a direct `provider/model[:thinking]`
+ * reference rather than a registry alias. Whitespace disqualifies: a
+ * real alias never contains spaces and neither does a model ref.
+ */
+export function isDirectModelSelector(selector: string): boolean {
+	const body = selector.trim().startsWith("@") ? selector.trim().slice(1) : selector.trim();
+	return body.length > 0 && body.includes("/") && !body.includes(" ");
+}
+
+/**
+ * Parse a direct model selector: `provider/model` or
+ * `provider/model:thinking`. Throws RangeError on malformed input.
+ */
+export function parseModelSelector(input: string): DirectModelSelector {
+	const trimmed = input.trim();
+	const body = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
+	if (!body) throw new RangeError("model selector must be non-empty");
+	if (body.includes(" ")) throw new RangeError(`model selector "${input}" must not contain spaces`);
+	const colonIdx = body.indexOf(":");
+	const ref = colonIdx === -1 ? body : body.slice(0, colonIdx);
+	const suffix = colonIdx === -1 ? undefined : body.slice(colonIdx + 1);
+	const slashIdx = ref.indexOf("/");
+	if (slashIdx === -1) throw new RangeError(`model selector "${input}" must look like provider/model`);
+	const provider = ref.slice(0, slashIdx);
+	const model = ref.slice(slashIdx + 1);
+	if (!provider) throw new RangeError(`model selector "${input}" missing provider before '/'`);
+	if (!model) throw new RangeError(`model selector "${input}" missing model id after '/'`);
+	if (suffix !== undefined) {
+		if (!suffix) throw new RangeError(`model selector "${input}" missing thinking suffix after ':'`);
+		if (suffix.includes(":")) throw new RangeError(`model selector "${input}" has multiple ':' suffixes`);
+		if (!isThinkingLevel(suffix)) {
+			throw new RangeError(
+				`model selector "${input}" has invalid thinking level "${suffix}"; expected one of ${THINKING_LEVELS.join(", ")}`,
+			);
+		}
+		return { provider, model, thinkingLevel: suffix };
+	}
+	return { provider, model };
+}
+
+// ─── alias suggestions ──────────────────────────────────────────────────
+
+function editDistance(a: string, b: string): number {
+	const aLower = a.toLowerCase();
+	const bLower = b.toLowerCase();
+	if (aLower === bLower) return 0;
+	const prev = new Array<number>(bLower.length + 1);
+	const curr = new Array<number>(bLower.length + 1);
+	for (let j = 0; j <= bLower.length; j++) prev[j] = j;
+	for (let i = 1; i <= aLower.length; i++) {
+		curr[0] = i;
+		for (let j = 1; j <= bLower.length; j++) {
+			const cost = aLower[i - 1] === bLower[j - 1] ? 0 : 1;
+			curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+		}
+		for (let j = 0; j <= bLower.length; j++) prev[j] = curr[j];
+	}
+	return prev[bLower.length];
+}
+
+/** Up to `limit` closest known aliases to a mistyped name (case-insensitive). */
+export function suggestRoleAliases(input: string, aliases: ReadonlyArray<string>, limit = 3): string[] {
+	const target = input.trim().toLowerCase();
+	if (!target) return [];
+	const maxDistance = Math.max(2, Math.floor(target.length / 2));
+	const scored: Array<{ alias: string; d: number }> = [];
+	for (const alias of aliases) {
+		const d = editDistance(target, alias.toLowerCase());
+		if (d <= maxDistance) scored.push({ alias, d });
+	}
+	scored.sort((a, b) => a.d - b.d || a.alias.localeCompare(b.alias));
+	return scored.slice(0, limit).map((s) => s.alias);
+}
+
+// ─── role cycling ───────────────────────────────────────────────────────
+
+/** OMP-parity default cycle: cheap → balanced → deep. */
+export const DEFAULT_CYCLE: readonly string[] = ["smol", "default", "slow"];
+
+export type CycleNormalization = { cycle: string[]; dropped: string[] };
+
+/**
+ * Validate a role cycle: keep order, drop unknown and duplicate
+ * aliases. Returns the kept cycle plus the dropped names (for a
+ * warning notification in the glue).
+ */
+export function normalizeCycle(raw: ReadonlyArray<string>, aliases: ReadonlyArray<string>): CycleNormalization {
+	const known = new Set<string>(aliases);
+	const seen = new Set<string>();
+	const cycle: string[] = [];
+	const dropped: string[] = [];
+	for (const entry of raw) {
+		const name = entry.trim();
+		if (!name) continue;
+		if (!known.has(name) || seen.has(name)) {
+			dropped.push(name);
+			continue;
+		}
+		seen.add(name);
+		cycle.push(name);
+	}
+	return { cycle, dropped };
+}
+
+/** DEFAULT_CYCLE filtered down to aliases that exist in the registry. */
+export function defaultCycle(aliases: ReadonlyArray<string>): string[] {
+	return normalizeCycle(DEFAULT_CYCLE, aliases).cycle;
+}
+
+export type CycleStep =
+	| { kind: "ok"; selector: string; resolution: RoleResolution; skipped: string[] }
+	| { kind: "exhausted"; tried: string[] };
+
+/**
+ * Advance the role cycle from the current selector to the next entry
+ * whose own model resolves against the available models. Wraps around
+ * the end of the cycle. Fallback resolutions do NOT count as hits:
+ * cycling is a deliberate switch, and an entry whose model is down
+ * would silently land somewhere the user did not ask for. Skipped
+ * entries are collected so the glue can explain what happened.
+ */
+export function stepRoleCycle(
+	cycle: ReadonlyArray<string>,
+	currentSelector: string | undefined,
+	registry: RoleRegistry,
+	available: ReadonlyArray<{ provider: string; id: string }>,
+	options?: { scoped?: ReadonlyArray<{ provider: string; id: string }> },
+): CycleStep {
+	if (cycle.length === 0) return { kind: "exhausted", tried: [] };
+	let currentAlias: string | undefined;
+	if (currentSelector) {
+		try {
+			currentAlias = parseRoleSelector(currentSelector).alias;
+		} catch {
+			currentAlias = undefined;
+		}
+	}
+	const startIdx = currentAlias !== undefined && cycle.includes(currentAlias) ? cycle.indexOf(currentAlias) : -1;
+	const skipped: string[] = [];
+	for (let offset = 1; offset <= cycle.length; offset++) {
+		const idx = (startIdx + offset + cycle.length) % cycle.length;
+		const alias = cycle[idx];
+		if (alias === undefined) continue;
+		if (alias === currentAlias) {
+			if (cycle.length > 1) continue;
+			skipped.push(alias);
+			continue;
+		}
+		const resolution = resolveRole(alias, registry, available, options);
+		if (resolution.kind === "exact" || resolution.kind === "inherited") {
+			return { kind: "ok", selector: alias, resolution, skipped };
+		}
+		skipped.push(alias);
+	}
+	return { kind: "exhausted", tried: skipped };
+}
+
+// ─── role rendering ──────────────────────────────────────────────────────
+
+/**
+ * Two-line list entry for `/role list`. The marker prefixes the active
+ * role; availability and thinking level make every entry self-describing.
+ */
+export function formatRoleEntry(
+	spec: RoleSpec,
+	options: { available: boolean; active: boolean; modelName?: string },
+): string {
+	const marker = options.active ? "▸ " : "  ";
+	const target = spec.provider && spec.model ? `${spec.provider}/${spec.model}` : `→ ${spec.ref ?? "?"}`;
+	const name = options.modelName && options.modelName !== spec.model ? ` (${options.modelName})` : "";
+	const thinking = spec.thinkingLevel ? ` · thinking=${spec.thinkingLevel}` : "";
+	const tools = spec.tools && spec.tools.length > 0 ? ` · tools=[${spec.tools.join(", ")}]` : "";
+	const state = options.available ? "" : " · unavailable";
+	return `${marker}${spec.alias} — ${target}${name}${thinking}${tools}${state}\n      ${spec.description}`;
+}
+
+/**
+ * Single-line picker label for a role (Pi selector options render one
+ * line each). Truncated with an ellipsis at `maxLen`.
+ */
+export function formatRolePickerLabel(spec: RoleSpec, modelName?: string, maxLen = 100): string {
+	const target = spec.provider && spec.model ? `${spec.provider}/${spec.model}` : `→ ${spec.ref ?? "?"}`;
+	const bits = [spec.alias, target];
+	if (modelName && modelName !== spec.model) bits.push(modelName);
+	if (spec.thinkingLevel) bits.push(`thinking=${spec.thinkingLevel}`);
+	const line = `${bits.join(" · ")} — ${spec.description}`;
+	return line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line;
 }

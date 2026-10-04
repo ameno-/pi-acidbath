@@ -309,8 +309,18 @@ run("mapCompactResult — non-abort + empty → empty wins over abort contract",
 
 // ─── 6. sanitizeCompactError ─────────────────────────────────────────────
 
-run("sanitizeCompactError — non-string returns empty string", () => {
-	assert("sanit.nonstr", sanitizeCompactError(undefined) === "");
+run("sanitizeCompactError — non-string yields a usable placeholder", () => {
+	// Must never be "": an empty message renders as a bare
+	// "(no error message)" and loses the real cause.
+	assert("sanit.nonstr", sanitizeCompactError(undefined) === "unknown error");
+	assert("sanit.emptystr", sanitizeCompactError("") === "unknown error (no detail reported)");
+	assert("sanit.blank", sanitizeCompactError("   ") === "unknown error (no detail reported)");
+	assert("sanit.null", sanitizeCompactError(null) === "unknown error");
+});
+
+run("sanitizeCompactError — trims but preserves real messages", () => {
+	assert("sanit.keeps", sanitizeCompactError("  boom  ") === "boom");
+	assert("sanit.trims", sanitizeCompactError("boom\n") === "boom");
 });
 
 run("sanitizeCompactError — strips OpenAI keys", () => {

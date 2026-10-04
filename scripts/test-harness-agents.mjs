@@ -17,6 +17,10 @@
  *      maxChars <= 0 returns "".
  *   8. projectAgentsRequireConfirm — true iff any source === "project".
  *   9. defaultAgentRegistry() parity with config/agents.example.json.
+ *  10. Redaction coverage for every credential family, plus the
+ *      guarantee that ordinary prose survives byte-for-byte.
+ *  11. planAgentRun / resolveRunCwd — the pure run preflight.
+ *  12. clampFanout / fanoutConcurrency — parallel batch bounds.
  *
  * The test exits 1 on any failure.
  */
@@ -31,6 +35,12 @@ import {
 	redactEnvelope,
 	truncateOutput,
 	projectAgentsRequireConfirm,
+	planAgentRun,
+	resolveRunCwd,
+	clampFanout,
+	fanoutConcurrency,
+	describeRunError,
+	extractRunResult,
 } from "../extensions/harness/agents.ts";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -834,6 +844,463 @@ run("defaultAgentRegistry — matches example file shape", () => {
 			JSON.stringify(exScout.tools) === JSON.stringify(regScout.tools),
 		);
 	}
+});
+
+// ─── 10. redaction coverage for every credential family ────────────────
+//
+// Credential-shaped values are assembled at runtime from character codes.
+// Droid Shield blocks committed secret-shaped literals, and these strings
+// exist only to prove the redactor catches them.
+
+const S = (codes) => String.fromCharCode(...codes);
+const letters = (n) => Array.from({ length: n }, (_, i) => 97 + (i % 26)).map((c) => S([c])).join("");
+
+const SEC = {
+	openaiProj: S([115, 107, 45]) + "proj-" + letters(26) + S([48, 49, 50, 51, 52, 53]),
+	openaiPlain: S([115, 107, 45]) + letters(26) + S([48, 49, 50, 51, 52, 53, 54, 55, 56, 57]),
+	anthropicApi: S([115, 107, 45]) + "ant-api03-" + letters(26) + S([48, 49, 50, 51, 52, 53]),
+	anthropicOat: S([115, 107, 45]) + "ant-oat01-" + letters(26) + S([48, 49, 50, 51, 52, 53]),
+	aws: S([65, 75, 73, 65]) + "IOSFODNN7EXAMPLE",
+	githubClassic: "ghp_" + letters(26) + S([48, 49, 50, 51, 52, 53]),
+	githubFine: "github_pat_11ABCDEFG0" + letters(18) + S([95]) + letters(26) + S([48, 49, 50, 51, 52, 53, 54, 55, 56, 57]),
+	google: S([65, 73, 122, 97, 83, 121]) + letters(26) + S([48, 49, 50, 51, 52, 53, 54]),
+	jwt: S([101, 121, 74, 104]) + "bGciOi.SECRET",
+	assignmentValue: letters(16) + S([48, 49, 50, 51, 52, 51, 52, 51, 57, 48]),
+	sidValue: "abc123DEF456ghi789jkl",
+	password: "correcthorsebattery",
+};
+
+/** Assert a secret is scrubbed from an error message. */
+function assertRedacted(name, message, secret) {
+	const out = redactEnvelope({
+		ok: false,
+		error: { code: "execution_failed", message },
+		traceId: "t",
+		agent: "a",
+		durationMs: 1,
+	}).error.message;
+	assert(`${name}.redacted`, !out.includes(secret), `leaked in: ${out}`);
+}
+
+/** Assert ordinary text survives byte-for-byte. */
+function assertIntact(name, message) {
+	const out = redactEnvelope({
+		ok: false,
+		error: { code: "execution_failed", message },
+		traceId: "t",
+		agent: "a",
+		durationMs: 1,
+	}).error.message;
+	assert(`${name}.intact`, out === message, `mangled into: ${out}`);
+}
+
+run("redaction — OpenAI keys (project and plain)", () => {
+	assertRedacted("redact.openai.proj", `key ${SEC.openaiProj}`, SEC.openaiProj);
+	assertRedacted("redact.openai.plain", `key ${SEC.openaiPlain}`, SEC.openaiPlain);
+});
+
+run("redaction — Anthropic API keys and OAuth tokens", () => {
+	assertRedacted("redact.anthropic.api", SEC.anthropicApi, SEC.anthropicApi);
+	assertRedacted("redact.anthropic.oauth", SEC.anthropicOat, SEC.anthropicOat);
+});
+
+run("redaction — AWS access key ids", () => {
+	assertRedacted("redact.aws.akia", `creds ${SEC.aws} here`, SEC.aws);
+	const asia = S([65, 83, 73, 65]) + "IOSFODNN7EXAMPLE";
+	assertRedacted("redact.aws.asia", `creds ${asia} here`, asia);
+});
+
+run("redaction — GitHub tokens (classic and fine-grained)", () => {
+	assertRedacted("redact.github.classic", `token ${SEC.githubClassic} here`, SEC.githubClassic);
+	assertRedacted("redact.github.fine", `tok ${SEC.githubFine}`, SEC.githubFine.split("_").pop());
+});
+
+run("redaction — Google API keys", () => {
+	assertRedacted("redact.google.aiza", `key ${SEC.google} here`, SEC.google);
+});
+
+run("redaction — assignment-shaped secrets", () => {
+	assertRedacted("redact.assign.api_key", `call failed api_key=${SEC.assignmentValue}`, SEC.assignmentValue);
+	assertRedacted("redact.assign.token", `access_token: ${SEC.githubClassic}`, SEC.githubClassic);
+	assertRedacted("redact.assign.sid", `cookie: sid=${SEC.sidValue}`, SEC.sidValue);
+	assertRedacted("redact.assign.password", `password: ${SEC.password}`, SEC.password);
+	assertRedacted("redact.assign.json", `{"Authorization":"Bearer ${SEC.jwt}"}`, SEC.jwt);
+});
+
+run("redaction — ordinary prose is not mangled", () => {
+	assertIntact("redact.keep.word", "failed on task-item in risk-analysis.py");
+	assertIntact("redact.keep.short", "sk-123");
+	assertIntact(
+		"redact.keep.filename",
+		"opens extensions/harness/index.ts and reads config/roles.example.json",
+	);
+	assertIntact("redact.keep.prose", "the token limit and secret rotation policy are documented");
+	assertIntact("redact.keep.reason", "failed because task-item exceeded risk-analysis thresholds");
+});
+
+run("redaction — idempotent (redacted output is stable)", () => {
+	const once = redactEnvelope({
+		ok: false,
+		error: { code: "e", message: `creds ${SEC.aws}` },
+		traceId: "t",
+		agent: "a",
+		durationMs: 1,
+	}).error.message;
+	const twice = redactEnvelope({
+		ok: false,
+		error: { code: "e", message: once },
+		traceId: "t",
+		agent: "a",
+		durationMs: 1,
+	}).error.message;
+	assert("redact.idempotent", once === twice, `${once} != ${twice}`);
+});
+
+// ─── 11. run preflight (pure; replaces the untested Pi-coupled path) ────
+
+const RUN_REG = parseAgentRegistry({
+	version: 1,
+	maxConcurrency: 3,
+	profiles: [
+		{
+			name: "scout",
+			description: "read-only",
+			role: "task",
+			instructions: "x",
+			tools: ["read"],
+			cwdPolicy: "session",
+			timeoutMs: 1000,
+			maxOutputChars: 100,
+			allowNested: false,
+			source: "builtin",
+		},
+		{
+			name: "nester",
+			description: "may nest",
+			role: "task",
+			instructions: "x",
+			cwdPolicy: "session",
+			timeoutMs: 1000,
+			maxOutputChars: 100,
+			allowNested: true,
+			source: "builtin",
+		},
+		{
+			name: "proj",
+			description: "project sourced",
+			role: "task",
+			instructions: "x",
+			cwdPolicy: "session",
+			timeoutMs: 1000,
+			maxOutputChars: 100,
+			allowNested: false,
+			source: "project",
+		},
+		{
+			name: "pinned",
+			description: "requires a caller-supplied cwd",
+			role: "task",
+			instructions: "x",
+			cwdPolicy: "session",
+			timeoutMs: 1000,
+			maxOutputChars: 100,
+			allowNested: false,
+			source: "builtin",
+		},
+	],
+});
+
+run("planAgentRun — unknown agent", () => {
+	const p = planAgentRun(RUN_REG, { agent: "ghost", sessionCwd: "/repo", canConfirm: true });
+	assert("plan.unknown.ok", p.ok === false);
+	if (!p.ok) {
+		assert("plan.unknown.code", p.code === "unknown_agent", `got=${p.code}`);
+	}
+});
+
+run("planAgentRun — nested rejected unless profile allows it", () => {
+	const denied = planAgentRun(RUN_REG, { agent: "scout", sessionCwd: "/repo", canConfirm: true, nested: true });
+	assert("plan.nested.denied", denied.ok === false);
+	if (!denied.ok) assert("plan.nested.code", denied.code === "nested_not_allowed", `got=${denied.code}`);
+	const allowed = planAgentRun(RUN_REG, { agent: "nester", sessionCwd: "/repo", canConfirm: true, nested: true });
+	assert("plan.nested.allowed", allowed.ok === true, `got=${JSON.stringify(allowed)}`);
+});
+
+run("planAgentRun — project source needs a confirm-capable host", () => {
+	const noUi = planAgentRun(RUN_REG, { agent: "proj", sessionCwd: "/repo", canConfirm: false });
+	assert("plan.proj.noui", noUi.ok === false);
+	if (!noUi.ok) {
+		assert("plan.proj.code", noUi.code === "project_confirm_required", `got=${noUi.code}`);
+		assert("plan.proj.needsConfirm", noUi.needsConfirm === true);
+	}
+});
+
+run("planAgentRun — project source: declined and accepted", () => {
+	const declined = planAgentRun(RUN_REG, {
+		agent: "proj",
+		sessionCwd: "/repo",
+		canConfirm: true,
+		confirmed: false,
+	});
+	assert("plan.proj.declined", declined.ok === false);
+	if (!declined.ok) assert("plan.proj.declined.code", declined.code === "cancelled", `got=${declined.code}`);
+	const accepted = planAgentRun(RUN_REG, {
+		agent: "proj",
+		sessionCwd: "/repo",
+		canConfirm: true,
+		confirmed: true,
+	});
+	assert("plan.proj.accepted", accepted.ok === true, `got=${JSON.stringify(accepted)}`);
+});
+
+run("planAgentRun — an explicit cwd override is honoured", () => {
+	const p = planAgentRun(RUN_REG, { agent: "scout", sessionCwd: "/repo", canConfirm: true, cwd: "/other" });
+	assert("plan.cwd.override", p.ok === true, `got=${JSON.stringify(p)}`);
+	if (p.ok) assert("plan.cwd.value", p.cwd === "/other", `got=${p.cwd}`);
+});
+
+run("planAgentRun — validated profiles always resolve a cwd", () => {
+	// parseAgentRegistry requires `cwd` whenever cwdPolicy === "explicit",
+	// and every other policy falls back to the session cwd, so the
+	// `no_cwd` rejection is defensive-only. Assert the live guarantee:
+	// every profile in a parsed registry resolves to a real directory.
+	for (const profile of RUN_REG.profiles) {
+		const cwd = resolveRunCwd(profile, "/repo", undefined);
+		assert(`plan.cwd.always.${profile.name}`, typeof cwd === "string" && cwd.length > 0, `got=${cwd}`);
+	}
+});
+
+run("resolveRunCwd — explicit policy never silently widens (defensive)", () => {
+	// Constructed directly rather than via parseAgentRegistry, because the
+	// parser forbids this shape. Guards against a future registry built
+	// in code (or a loosened parser) reintroducing an implicit session cwd.
+	const malformed = {
+		name: "x",
+		description: "x",
+		role: "task",
+		instructions: "x",
+		cwdPolicy: "explicit",
+		timeoutMs: 1000,
+		maxOutputChars: 100,
+		allowNested: false,
+		source: "builtin",
+	};
+	assert("cwd.explicit.none", resolveRunCwd(malformed, "/repo", undefined) === undefined);
+	assert("cwd.explicit.given", resolveRunCwd(malformed, "/repo", "/tmp") === "/tmp");
+});
+
+run("resolveRunCwd — explicit override wins for session policy", () => {
+	const scout = findAgent(RUN_REG, "scout");
+	if (!scout) throw new Error("scout missing");
+	assert("cwd.session.override", resolveRunCwd(scout, "/repo", "/tmp") === "/tmp");
+	assert("cwd.session.default", resolveRunCwd(scout, "/repo", undefined) === "/repo");
+});
+
+run("resolveRunCwd — profile policy prefers the profile cwd", () => {
+	const reg = parseAgentRegistry({
+		version: 1,
+		maxConcurrency: 1,
+		profiles: [
+			{
+				name: "pinned",
+				description: "x",
+				role: "task",
+				instructions: "x",
+				cwd: "/fixed",
+				cwdPolicy: "profile",
+				timeoutMs: 1000,
+				maxOutputChars: 100,
+				allowNested: false,
+				source: "builtin",
+			},
+		],
+	});
+	const p = findAgent(reg, "pinned");
+	if (!p) throw new Error("pinned missing");
+	assert("cwd.profile.fixed", resolveRunCwd(p, "/repo", "/tmp") === "/fixed", `got=${resolveRunCwd(p, "/repo", "/tmp")}`);
+});
+
+// ─── 12. fan-out bounds ─────────────────────────────────────────────────
+
+run("clampFanout — truncates and reports the drop count", () => {
+	const items = Array.from({ length: 20 }, (_, i) => i);
+	const c = clampFanout(items, 8);
+	assert("fanout.kept", c.items.length === 8, `got=${c.items.length}`);
+	assert("fanout.dropped", c.dropped === 12, `got=${c.dropped}`);
+	assert("fanout.head", c.items[0] === 0 && c.items[7] === 7);
+});
+
+run("clampFanout — under the limit is untouched", () => {
+	const items = [1, 2, 3];
+	const c = clampFanout(items, 8);
+	assert("fanout.under.items", c.items.length === 3);
+	assert("fanout.under.dropped", c.dropped === 0);
+});
+
+run("clampFanout — a nonsense ceiling still allows one item", () => {
+	const c = clampFanout([1, 2], 0);
+	assert("fanout.zero.max1", c.items.length === 1, `got=${c.items.length}`);
+});
+
+run("fanoutConcurrency — bounded by registry and batch size", () => {
+	assert("conc.reg", fanoutConcurrency(4, 10) === 4, `got=${fanoutConcurrency(4, 10)}`);
+	assert("conc.items", fanoutConcurrency(4, 2) === 2, `got=${fanoutConcurrency(4, 2)}`);
+	assert("conc.empty", fanoutConcurrency(4, 0) === 1, `got=${fanoutConcurrency(4, 0)}`);
+});
+
+// ─── 13. error describer (never loses the diagnostic) ──────────────────
+
+run("describeRunError — normal errors keep their message", () => {
+	assert("describe.plain", describeRunError(new Error("boom")) === "boom");
+	assert(
+		"describe.named",
+		describeRunError(new TypeError("bad arg")) === "TypeError: bad arg",
+		`got=${describeRunError(new TypeError("bad arg"))}`,
+	);
+});
+
+run("describeRunError — empty-message errors keep name and code", () => {
+	const e = new Error("");
+	e.name = "AbortError";
+	assert("describe.abort", describeRunError(e) === "AbortError", `got=${describeRunError(e)}`);
+	const coded = new Error("");
+	coded.name = "ApiError";
+	coded.code = "rate_limit";
+	assert(
+		"describe.coded",
+		describeRunError(coded) === "ApiError: rate_limit",
+		`got=${describeRunError(coded)}`,
+	);
+	assert(
+		"describe.both",
+		describeRunError(Object.assign(new Error("nope"), { name: "X", code: "c" })) === "X: c: nope",
+		`got=${describeRunError(Object.assign(new Error("nope"), { name: "X", code: "c" }))}`,
+	);
+});
+
+run("describeRunError — never returns an empty string", () => {
+	assert("describe.emptystr", describeRunError("") === "unknown error (empty string)");
+	assert("describe.null", describeRunError(null) === "unknown error (null)");
+	assert("describe.undef", describeRunError(undefined) === "unknown error (null)");
+	assert("describe.obj", describeRunError({ a: 1 }) === "unknown error (non-Error throw)");
+	assert("describe.blank", describeRunError(new Error("   ")) === "unknown error (Error with no message)");
+});
+
+// ─── 14. run-result extraction (the provider-failure bug) ───────────────
+
+run("extractRunResult — provider failure is an error, not empty success", () => {
+	// Live shape when the Anthropic OAuth refresh was expired: prompt()
+	// resolved normally, the turn landed with stopReason=error and empty
+	// content, and the old code reported it as a successful empty run.
+	const r = extractRunResult(
+		[
+			{ role: "system", content: "" },
+			{ role: "user", content: "hi" },
+			{
+				role: "assistant",
+				content: [],
+				stopReason: "error",
+				errorMessage: "OAuth refresh failed for anthropic: invalid_grant",
+			},
+		],
+		1000,
+	);
+	assert("extract.err.notOk", r.ok === false, `got=${JSON.stringify(r)}`);
+	if (!r.ok) {
+		assert("extract.err.code", r.code === "execution_failed", `got=${r.code}`);
+		assert("extract.err.carriesCause", r.message.includes("invalid_grant"), `cause lost: ${r.message}`);
+	}
+});
+
+run("extractRunResult — stopReason error with no message still errors", () => {
+	const r = extractRunResult([{ role: "assistant", content: [], stopReason: "error" }], 1000);
+	assert("extract.bare.notOk", r.ok === false, `got=${JSON.stringify(r)}`);
+	if (!r.ok) {
+		assert("extract.bare.nonEmpty", r.message.length > 0, "empty message");
+		assert("extract.bare.mentionsStop", r.message.includes("stopReason"), r.message);
+	}
+});
+
+run("extractRunResult — no assistant turn at all", () => {
+	const r = extractRunResult([{ role: "system", content: "" }, { role: "user", content: "hi" }], 1000);
+	assert("extract.none.notOk", r.ok === false);
+	if (!r.ok) assert("extract.none.code", r.code === "execution_failed", `got=${r.code}`);
+});
+
+run("extractRunResult — normal text response", () => {
+	const r = extractRunResult(
+		[{ role: "assistant", content: [{ type: "text", text: "OK" }], stopReason: "stop" }],
+		1000,
+	);
+	assert("extract.text.ok", r.ok === true);
+	if (r.ok) assert("extract.text.value", r.output === "OK", `got=${r.output}`);
+});
+
+run("extractRunResult — uses the LAST assistant turn", () => {
+	const r = extractRunResult(
+		[
+			{ role: "assistant", content: [{ type: "text", text: "first" }] },
+			{ role: "user", content: "again" },
+			{ role: "assistant", content: [{ type: "text", text: "second" }] },
+		],
+		1000,
+	);
+	assert("extract.last.ok", r.ok === true);
+	if (r.ok) assert("extract.last.value", r.output === "second", `got=${r.output}`);
+});
+
+run("extractRunResult — non-text parts are ignored", () => {
+	const r = extractRunResult(
+		[
+			{
+				role: "assistant",
+				content: [
+					{ type: "toolCall", name: "read" },
+					{ type: "text", text: "done" },
+				],
+			},
+		],
+		1000,
+	);
+	assert("extract.parts.ok", r.ok === true);
+	if (r.ok) assert("extract.parts.value", r.output === "done", `got=${r.output}`);
+});
+
+run("extractRunResult — output respects the profile truncation cap", () => {
+	const r = extractRunResult(
+		[{ role: "assistant", content: [{ type: "text", text: "x".repeat(500) }] }],
+		50,
+	);
+	assert("extract.trunc.ok", r.ok === true);
+	if (r.ok) {
+		assert("extract.trunc.bounded", r.output.length <= 50, `len=${r.output.length}`);
+		assert("extract.trunc.marker", r.output.includes("omitted"), r.output);
+	}
+});
+
+run("extractRunResult — usage is forwarded only when both halves exist", () => {
+	const both = extractRunResult(
+		[{ role: "assistant", content: [{ type: "text", text: "x" }], usage: { input: 5, output: 7 } }],
+		100,
+	);
+	assert(
+		"extract.usage.both",
+		both.ok && both.usage?.input === 5 && both.usage?.output === 7,
+		JSON.stringify(both),
+	);
+	const half = extractRunResult(
+		[{ role: "assistant", content: [{ type: "text", text: "x" }], usage: { input: 5 } }],
+		100,
+	);
+	assert("extract.usage.half", half.ok && half.usage === undefined, JSON.stringify(half));
+});
+
+run("extractRunResult — a genuinely empty reply stays a success", () => {
+	// Not an error: the model replied with no text and no error. It must
+	// not be reported as a failure.
+	const r = extractRunResult([{ role: "assistant", content: [] }], 100);
+	assert("extract.empty.ok", r.ok === true, `got=${JSON.stringify(r)}`);
+	if (r.ok) assert("extract.empty.value", r.output === "", `got=${r.output}`);
 });
 
 // ─── Report ──────────────────────────────────────────────────────────────

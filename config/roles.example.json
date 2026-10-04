@@ -72,5 +72,6 @@
       "description": "Cheapest possible model — last-resort fallback."
     }
   ],
-  "fallback": ["default", "tiny"]
+  "fallback": ["default", "tiny"],
+  "cycle": ["smol", "default", "slow"]
 }

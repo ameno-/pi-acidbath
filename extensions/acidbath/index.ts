@@ -356,9 +356,15 @@ export default function acidbath(pi: ExtensionAPI): void {
 	pi.on("session_before_tree", async () => recordStatus("tree-navigation", "navigating session tree"));
 	pi.on("session_tree", async () => recordStatus("settled", "settled"));
 
-	pi.on("model_select", async (event) => {
+	pi.on("model_select", async (event, ctx) => {
 		footerWidget?.update({ modelName: event.model.name });
 		welcomeWidget?.update({ model: event.model.name, modelCard: modelCardFor(event.model.name, event.model.cost, thinkingLevel) });
+		try {
+			const available = ctx.modelRegistry.getAvailable().length;
+			setWelcomeCheck("model", "ok", `${event.model.name} · ${available} available`);
+		} catch {
+			setWelcomeCheck("model", "ok", event.model.name);
+		}
 	});
 
 	pi.on("thinking_level_select", async (event, ctx) => {

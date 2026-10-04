@@ -267,3 +267,73 @@ export function formatMagicHints(matches: MagicMatch[]): string {
 	}
 	return lines.join("\n");
 }
+
+const MAGIC_WORD_RE = /^[a-z][a-z0-9]*([_-][a-z0-9]+)*$/;
+
+function copyKeyword(keyword: MagicKeyword): MagicKeyword {
+	const copy: MagicKeyword = {
+		id: keyword.id,
+		word: keyword.word,
+		hint: keyword.hint,
+		enabled: keyword.enabled,
+	};
+	if (keyword.raiseThinking !== undefined) copy.raiseThinking = keyword.raiseThinking;
+	return copy;
+}
+
+/** Normalize a user-entered magic word. Throws RangeError when it cannot match as prose. */
+export function normalizeMagicWord(input: string): string {
+	const word = input.trim().toLowerCase();
+	if (!MAGIC_WORD_RE.test(word)) {
+		throw new RangeError("magic word must be lowercase prose: letters, digits, and single _ or - separators");
+	}
+	return word;
+}
+
+/** Add an enabled keyword and turn matching on. Does not mutate the input registry. */
+export function addMagicKeyword(
+	registry: MagicRegistry,
+	input: { word: string; hint?: string; raiseThinking?: boolean },
+): MagicRegistry {
+	const word = normalizeMagicWord(input.word);
+	if (registry.keywords.some((keyword) => keyword.id === word || keyword.word.toLowerCase() === word)) {
+		throw new RangeError(`magic keyword "${word}" already exists`);
+	}
+	const hint = input.hint?.trim() || `Notice for ${word}.`;
+	const keyword: MagicKeyword = {
+		id: word,
+		word,
+		hint,
+		enabled: true,
+		...(input.raiseThinking ? { raiseThinking: true } : {}),
+	};
+	return {
+		enabled: true,
+		keywords: [...registry.keywords.map(copyKeyword), keyword],
+	};
+}
+
+/** Remove a keyword by id. Does not mutate the input registry. */
+export function removeMagicKeyword(registry: MagicRegistry, id: string): MagicRegistry {
+	if (!registry.keywords.some((keyword) => keyword.id === id)) {
+		throw new RangeError(`magic keyword "${id}" does not exist`);
+	}
+	return {
+		enabled: registry.enabled,
+		keywords: registry.keywords.filter((keyword) => keyword.id !== id).map(copyKeyword),
+	};
+}
+
+/**
+ * Enable or disable one existing keyword. Enabling a keyword also turns
+ * registry matching on; otherwise the keyword would still never match.
+ */
+export function setMagicKeywordEnabled(registry: MagicRegistry, id: string, enabled: boolean): MagicRegistry {
+	if (!registry.keywords.some((keyword) => keyword.id === id)) {
+		throw new RangeError(`magic keyword "${id}" does not exist`);
+	}
+	return {
+		enabled: enabled ? true : registry.enabled,
+		keywords: registry.keywords.map((keyword) => keyword.id === id ? { ...copyKeyword(keyword), enabled } : copyKeyword(keyword)),
+	};
+}

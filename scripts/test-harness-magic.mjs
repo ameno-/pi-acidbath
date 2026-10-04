@@ -25,10 +25,13 @@
  */
 
 import {
+	addMagicKeyword,
 	defaultMagicRegistry,
 	formatMagicHints,
 	matchMagicWords,
 	parseMagicRegistry,
+	removeMagicKeyword,
+	setMagicKeywordEnabled,
 } from "../extensions/harness/magic.ts";
 
 let passed = 0;
@@ -440,6 +443,29 @@ run("raiseThinking defaults to false when absent", () => {
 	]);
 	const out = matchMagicWords("plain word", reg);
 	assert("raise.default", out.length === 1 && out[0].raiseThinking === false, `got=${JSON.stringify(out)}`);
+});
+
+run("addMagicKeyword enables matching and the new word", () => {
+	const next = addMagicKeyword(defaultMagicRegistry(), { word: "ShipIt", hint: "keep it small", raiseThinking: true });
+	assert("add.enabled", next.enabled === true);
+	assert("add.word", next.keywords.some((keyword) => keyword.id === "shipit" && keyword.enabled && keyword.raiseThinking === true));
+	assert("add.matches", matchMagicWords("please shipit now", next).length === 1);
+	let threw = false;
+	try {
+		addMagicKeyword(next, { word: "shipit" });
+	} catch {
+		threw = true;
+	}
+	assert("add.duplicate", threw);
+});
+
+run("setMagicKeywordEnabled rejects unknown ids and turns matching on", () => {
+	const added = addMagicKeyword(defaultMagicRegistry(), { word: "focus" });
+	const disabled = setMagicKeywordEnabled(added, "focus", false);
+	assert("toggle.off", disabled.keywords[0].enabled === false);
+	const enabled = setMagicKeywordEnabled(disabled, "focus", true);
+	assert("toggle.on", enabled.enabled === true && enabled.keywords[0].enabled === true);
+	assert("remove", removeMagicKeyword(enabled, "focus").keywords.length === 0);
 });
 
 // ---------------------------------------------------------------------------

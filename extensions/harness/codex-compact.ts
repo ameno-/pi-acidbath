@@ -224,10 +224,16 @@ const PATTERNS: Array<{ re: RegExp; replacement: string }> = [
  * input unchanged when it is not a string.
  */
 export function sanitizeCompactError(message: string): string {
-	if (typeof message !== "string") return "";
+	if (typeof message !== "string") return "unknown error";
 	let out = message;
 	for (const { re, replacement } of PATTERNS) {
 		out = out.replace(re, replacement);
 	}
-	return out;
+	// A rejection with an empty or whitespace-only message is common (some
+	// SDK errors carry no message at all). Without this the caller renders a
+	// bare "(no error message)" and the real cause is unrecoverable, so fall
+	// back to a stable placeholder instead of returning "".
+	const trimmed = out.trim();
+	if (trimmed.length === 0) return "unknown error (no detail reported)";
+	return trimmed;
 }
