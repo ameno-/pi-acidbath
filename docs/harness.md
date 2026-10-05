@@ -104,14 +104,41 @@ and `key=value` credential assignments.
 ## Config
 
 - `config/roles.example.json` — starter role aliases and the `cycle` order. Runtime edits are saved to `~/.pi/agent/acidbath/roles.json`, or `PI_ACIDBATH_ROLES_PATH`. A registry that fails to parse is never swallowed silently: `/role list` shows the built-in defaults *and* the parse error with its file path.
-- `config/magic.example.json` — starter keyword table, matching off. Added keywords are saved to `~/.pi/agent/acidbath/magic.json`, or `PI_ACIDBATH_MAGIC_PATH`.
+- `config/magic.example.json` — starter keyword table, matching off. Added keywords are saved to `~/.pi/agent/acidbath/magic.json`, or `PI_ACIDBATH_MAGIC_PATH`. The registry is also recorded in the session transcript, so resuming a session keeps keywords added mid-session.
 - `config/agents.example.json` — agent profiles and concurrency ceiling. Override with `PI_ACIDBATH_AGENTS_PATH`.
-- `PI_ACIDBATH_CODEX_COMPACT=1` — opt-in Codex-session compaction via `modelRegistry.complete` and native fallback.
+- `PI_ACIDBATH_CODEX_COMPACT=1` — opt-in Codex-session compaction via `modelRegistry.complete` and native fallback. The gate accepts `openai-codex`, any provider whose final path segment is `codex` (so gateway-namespaced `ap-codex` works), and a codex-named model on an OpenAI-ish provider. Every skip notifies before falling back.
 
 ## Tests
 
 Run with Node 22 or 24 (`--experimental-strip-types`). System Node 20 is insufficient.
 
+## Prompt injection boundary
+
+`/recap`, `/handoff`, and Codex compaction all summarise or compress text the
+user (or a tool, or a pasted document) produced, and all three interpolate
+that untrusted text beneath their own structural delimiters. Left alone,
+content reading `## Goal`, `---`, or `Conversation so far:` is parsed as
+prompt framing rather than as data, letting session content pose as
+instructions to the model doing the summarising.
+
+All three now fence the untrusted region between explicit `BEGIN`/`END`
+markers, label it as data-not-instructions, and restate the framing after it.
+Lines inside the region that imitate a structural delimiter are prefixed with
+a zero-width joiner, which changes the line's identity without altering what
+it means. Ordinary content passes through untouched.
+
+## Known limitations
+
+- Compaction and `/handoff` both fall back to Pi's native behaviour on
+  failure. The fallback path now notifies, but a Codex session with an
+  unavailable `compact` role will warn on every compaction rather than once.
+- The persisted-state validators are module-private, so they are exercised
+  through live sessions rather than unit tests.
+- Screenshot capture for evidence requires the `true-input` backend and a
+  Wayland compositor; this environment has neither, so live verification is
+  captured as terminal transcripts.
+
 ## ADRs
 
-`docs/decisions/adr-0001.md` through `adr-0006.md`.
+`docs/decisions/adr-0001.md` through `adr-0006.md`, each with an amendment
+describing the hardening pass.
