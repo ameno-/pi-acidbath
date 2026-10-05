@@ -299,12 +299,34 @@ type HarnessMagicState = {
 
 function isMagicState(value: unknown): value is HarnessMagicState {
 	if (!value || typeof value !== "object") return false;
-	const v = value as { registry?: unknown; pendingMatches?: unknown };
+	const v = value as { registry?: unknown; pendingMatches?: unknown; priorThinkingLevel?: unknown };
 	if (!v.registry || typeof v.registry !== "object") return false;
 	const reg = v.registry as { enabled?: unknown; keywords?: unknown };
 	if (typeof reg.enabled !== "boolean") return false;
 	if (!Array.isArray(reg.keywords)) return false;
+	// Previously any array passed, so a payload carrying `keywords: [null]`
+	// or `[{}]` was accepted as a live registry and every later access to
+	// `k.word` / `k.id` read off a non-object. Validate the shape instead.
+	for (const k of reg.keywords) {
+		if (!k || typeof k !== "object") return false;
+		const kw = k as { id?: unknown; word?: unknown; hint?: unknown; enabled?: unknown };
+		if (typeof kw.id !== "string" || kw.id.length === 0) return false;
+		if (typeof kw.word !== "string" || kw.word.length === 0) return false;
+		if (typeof kw.hint !== "string") return false;
+		if (typeof kw.enabled !== "boolean") return false;
+	}
 	if (!Array.isArray(v.pendingMatches)) return false;
+	for (const m of v.pendingMatches) {
+		if (!m || typeof m !== "object") return false;
+		const match = m as { id?: unknown; word?: unknown; hint?: unknown; raiseThinking?: unknown };
+		if (typeof match.id !== "string" || typeof match.word !== "string") return false;
+		if (typeof match.hint !== "string") return false;
+		if (match.raiseThinking !== undefined && typeof match.raiseThinking !== "boolean") return false;
+	}
+	// A restored state must never carry an in-flight thinking raise: the
+	// prior level belongs to a turn that no longer exists, and restoring it
+	// would strand the session on a stale level.
+	if (v.priorThinkingLevel !== undefined && typeof v.priorThinkingLevel !== "string") return false;
 	return true;
 }
 
@@ -316,13 +338,20 @@ type HarnessRoleState = {
 function isRoleState(value: unknown): value is HarnessRoleState {
 	if (!value || typeof value !== "object") return false;
 	const v = value as { selector?: unknown; snapshot?: unknown };
-	if (v.selector !== undefined && typeof v.selector !== "string") return false;
+	if (v.selector !== undefined && (typeof v.selector !== "string" || v.selector.length === 0)) return false;
 	if (v.snapshot !== undefined) {
 		const s = v.snapshot;
 		if (!s || typeof s !== "object") return false;
 		const ss = s as { thinkingLevel?: unknown; tools?: unknown };
-		if (typeof ss.thinkingLevel !== "string") return false;
+		// thinkingLevel must be one Pi accepts; an arbitrary string would be
+		// handed straight to setThinkingLevel and rejected at apply time.
+		if (!isThinkingLevel(ss.thinkingLevel)) return false;
+		// Tools must be strings — `tools` is forwarded to the session, and a
+		// junk entry would produce an opaque failure much later.
 		if (!Array.isArray(ss.tools)) return false;
+		for (const t of ss.tools) {
+			if (typeof t !== "string") return false;
+		}
 	}
 	return true;
 }
@@ -532,11 +561,37 @@ export default function harness(pi: ExtensionAPI): void {
 
 	// ─── session_start: restore persisted state ──────────────────────
 	pi.on("session_start", async (_event, ctx) => {
+		// A fresh session never inherits an in-flight magic turn: pending
+		// matches belong to a prompt that is gone, and a prior thinking
+		// raise belongs to a turn that already ended. Both are dropped
+		// explicitly rather than carried across.
+		magicState = { registry: defaultMagicRegistry(), pendingMatches: [] };
 		try {
 			const registry = await loadMagicRegistry();
 			magicState = { registry, pendingMatches: [] };
 		} catch {
 			magicState = { registry: defaultMagicRegistry(), pendingMatches: [] };
+		}
+
+		// Restore the magic registry recorded in the session transcript, so
+		// a keyword added mid-session survives resuming that session. The
+		// user file is the base; the transcript wins when it holds a valid,
+		// newer registry (this is what `/magic add|remove|enable|disable`
+		// appends). Note the restore deliberately drops pendingMatches and
+		// any priorThinkingLevel.
+		try {
+			const branch = getRawBranch(ctx);
+			for (let i = branch.length - 1; i >= 0; i--) {
+				const entry = branch[i];
+				if (entry.type !== "custom" || entry.customType !== MAGIC_STATE_ENTRY_TYPE) continue;
+				if (isMagicState(entry.data)) {
+					magicState = { registry: entry.data.registry, pendingMatches: [] };
+				}
+				break;
+			}
+		} catch {
+			// A malformed transcript entry leaves the file-loaded registry
+			// in place, which is the safe outcome.
 		}
 
 		// Restore role state from the latest harness-role-state custom entry.
