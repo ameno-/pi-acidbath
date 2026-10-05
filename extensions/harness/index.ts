@@ -1232,14 +1232,25 @@ export default function harness(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const result = await ctx.newSession({
-				parentSession: currentSessionFile,
-				withSession: async (replacementCtx) => {
-					replacementCtx.ui.setEditorText(edited);
-					replacementCtx.ui.notify("handoff ready — review and submit when ready", "info");
-				},
-			});
-			if (result.cancelled) {
+			// Child-session creation can fail (disk, a reload racing the
+			// call, a provider switch mid-flight). Surface it instead of
+			// letting the rejection escape the command handler, which
+			// would leave the user with a failed handoff and no reason.
+			let result: { cancelled?: boolean } | undefined;
+			try {
+				result = await ctx.newSession({
+					parentSession: currentSessionFile,
+					withSession: async (replacementCtx) => {
+						replacementCtx.ui.setEditorText(edited);
+						replacementCtx.ui.notify("handoff ready — review and submit when ready", "info");
+					},
+				});
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				ctx.ui.notify(`handoff failed to start new session: ${sanitizeCompactError(msg)}`, "error");
+				return;
+			}
+			if (result?.cancelled) {
 				ctx.ui.notify("new session cancelled", "info");
 			}
 		},
