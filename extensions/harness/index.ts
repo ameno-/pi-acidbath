@@ -1398,10 +1398,20 @@ export default function harness(pi: ExtensionAPI): void {
 			scoped: buildScopedList(ctx),
 		});
 		if (compactResolution.kind === "error" || !compactResolution.spec.provider || !compactResolution.spec.model) {
+			// The user explicitly enabled this path and configured a
+			// "compact" role, so a broken one is worth reporting rather
+			// than falling through unnoticed.
+			ctx.ui.notify('acidbath codex compaction skipped: the "compact" role is not available — using native compaction', "warning");
 			return {};
 		}
 		const compactModel = ctx.modelRegistry.find(compactResolution.spec.provider, compactResolution.spec.model);
-		if (!compactModel) return {};
+		if (!compactModel) {
+			ctx.ui.notify(
+				`acidbath codex compaction skipped: model ${compactResolution.spec.provider}/${compactResolution.spec.model} is not available — using native compaction`,
+				"warning",
+			);
+			return {};
+		}
 
 		const previousSummary = typeof event.preparation?.previousSummary === "string"
 			? event.preparation.previousSummary
@@ -1442,7 +1452,15 @@ export default function harness(pi: ExtensionAPI): void {
 		const firstKeptEntryId = event.preparation?.firstKeptEntryId ?? "";
 		const tokensBefore = event.preparation?.tokensBefore ?? 0;
 		const mapped = mapCompactResult({ summary, aborted, firstKeptEntryId, tokensBefore });
-		if (!mapped.handled) return {};
+		if (!mapped.handled) {
+			// Silently returning {} here falls back to Pi's native
+			// compaction, so the session still works — but the user has no
+			// way to learn that their configured compaction path was skipped
+			// (expired credentials, quota, a missing "compact" role). Say
+			// so, then let the native path run.
+			ctx.ui.notify(`acidbath codex compaction skipped: ${mapped.reason} — using native compaction`, "warning");
+			return {};
+		}
 
 		return {
 			compaction: {
