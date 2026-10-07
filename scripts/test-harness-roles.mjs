@@ -318,8 +318,30 @@ run("parseRoleRegistry — rejects fallback pointing to unknown alias", () => {
 
 // ─── 4. resolveRole ──────────────────────────────────────────────────────
 
-const REG = defaultRoleRegistry();
-const ALL_AVAILABLE = REG.aliases.map((s) => ({ provider: s.provider, id: s.model }));
+/**
+ * Concrete mirror of the default registry: every modelRef alias is
+ * bound to the catalog model it matches, so the resolution tests here
+ * exercise pinned-spec behavior. (defaultRoleRegistry() itself is now
+ * provider-exposed ref-based; no provider refactor needed downstream.)
+ */
+const CONCRETE = {
+	version: 1,
+	aliases: [
+		{ alias: "default", provider: "anthropic", model: "claude-sonnet-4-5", thinkingLevel: "medium", description: "Default Sonnet with balanced thinking." },
+		{ alias: "compact", provider: "anthropic", model: "claude-haiku-4-5", thinkingLevel: "low", description: "Compact Haiku for low-stakes turns." },
+		{ alias: "smol", provider: "openai", model: "gpt-5-mini", thinkingLevel: "minimal", description: "Cheap, fast mini model for trivial turns." },
+		{ alias: "slow", provider: "anthropic", model: "claude-opus-4-1", thinkingLevel: "high", description: "Deep Opus for hard problems." },
+		{ alias: "vision", provider: "anthropic", model: "claude-sonnet-4-5", tools: ["read"], description: "Sonnet restricted to read-only tools." },
+		{ alias: "plan", provider: "anthropic", model: "claude-sonnet-4-5", thinkingLevel: "high", description: "Sonnet with high thinking for planning." },
+		{ alias: "commit", provider: "openai", model: "gpt-5-mini", thinkingLevel: "low", description: "Small model for commit-message drafting." },
+		{ alias: "task", provider: "anthropic", model: "claude-haiku-4-5", thinkingLevel: "low", description: "Haiku for subagent task runs." },
+		{ alias: "advisor", provider: "anthropic", model: "claude-opus-4-1", thinkingLevel: "high", description: "Opus for advisory / second-opinion prompts." },
+		{ alias: "tiny", provider: "openai", model: "gpt-5-nano", thinkingLevel: "off", description: "Cheapest possible model — last-resort fallback." },
+	],
+	fallback: ["default", "tiny"],
+};
+const REG = CONCRETE;
+const ALL_AVAILABLE = CONCRETE.aliases.map((s) => ({ provider: s.provider, id: s.model }));
 
 run("resolveRole — exact hit", () => {
 	const r = resolveRole("default", REG, ALL_AVAILABLE);
@@ -806,7 +828,11 @@ run("formatRoleEntry — active marker, thinking, tools, description", () => {
 	const reg = defaultRoleRegistry();
 	const vision = reg.aliases.find((s) => s.alias === "vision");
 	if (!vision) throw new Error("vision missing");
-	const entry = formatRoleEntry(vision, { available: true, active: true, modelName: "Claude Sonnet 4.5" });
+	const bound = applyThinkingOverride(vision, vision.thinkingLevel);
+	const entry = formatRoleEntry(
+		{ ...bound, provider: "anthropic", model: "claude-sonnet-4-5" },
+		{ available: true, active: true, modelName: "Claude Sonnet 4.5" },
+	);
 	assert("entry.marker", entry.startsWith("▸ vision"), `got="${entry}"`);
 	assert("entry.target", entry.includes("anthropic/claude-sonnet-4-5"), `got="${entry}"`);
 	assert("entry.name", entry.includes("(Claude Sonnet 4.5)"), `got="${entry}"`);
@@ -827,7 +853,10 @@ run("formatRolePickerLabel — one line with description and thinking", () => {
 	const reg = defaultRoleRegistry();
 	const slow = reg.aliases.find((s) => s.alias === "slow");
 	if (!slow) throw new Error("slow missing");
-	const label = formatRolePickerLabel(slow, "Claude Opus 4.1");
+	const label = formatRolePickerLabel(
+		{ ...slow, provider: "anthropic", model: "claude-opus-4-1" },
+		"Claude Opus 4.1",
+	);
 	assert("label.parts", label.includes("slow") && label.includes("anthropic/claude-opus-4-1"), `got="${label}"`);
 	assert("label.name", label.includes("Claude Opus 4.1"), `got="${label}"`);
 	assert("label.thinking", label.includes("thinking=high"), `got="${label}"`);
@@ -842,6 +871,131 @@ run("formatRolePickerLabel — truncation at maxLen", () => {
 		40,
 	);
 	assert("label.trunc", label.length <= 40 && label.endsWith("…"), `got=${label.length}`);
+});
+
+// ─── 16. modelRef (provider-exposed model refs) ─────────────────────────
+
+const MODEL_CATALOG = [
+	{ provider: "anthropic", id: "claude-opus-4-1", name: "Opus 4.1" },
+	{ provider: "ap-codex", id: "gpt-5-codex", name: "Codex: GPT-5 Codex" },
+	{ provider: "ap-codex", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+];
+
+run("parseRoleRegistry — accepts modelRef spec", () => {
+	const reg = parseRoleRegistry({
+		version: 1,
+		aliases: [{ alias: "opus", description: "d", modelRef: "Opus" }],
+		fallback: [],
+	});
+	const opus = reg.aliases.find((s) => s.alias === "opus");
+	assert("mref.accepted", opus?.modelRef === "Opus", `got=${opus?.modelRef}`);
+	assert("mref.no.pinned.model", opus?.provider === undefined && opus?.model === undefined);
+});
+
+run("parseRoleRegistry — modelRef plus provider+model throws", () => {
+	let threw = false;
+	try {
+		parseRoleRegistry({
+			version: 1,
+			aliases: [{ alias: "x", description: "d", modelRef: "Opus", provider: "p", model: "m" }],
+			fallback: [],
+		});
+	} catch {
+		threw = true;
+	}
+	assert("mref.conflict.threw", threw);
+});
+
+run("resolveRole — modelRef resolves against catalog name", () => {
+	const reg = parseRoleRegistry({
+		version: 1,
+		aliases: [{ alias: "opus", description: "d", modelRef: "Opus", thinkingLevel: "high" }],
+		fallback: [],
+	});
+	const r = resolveRole("opus", reg, MODEL_CATALOG);
+	assert("mref.resolves.kind", r.kind === "exact", `got=${r.kind}`);
+	if (r.kind === "exact") {
+		assert("mref.resolves.provider", r.spec.provider === "anthropic");
+		assert("mref.resolves.model", r.spec.model === "claude-opus-4-1");
+		assert("mref.resolves.thinking", r.spec.thinkingLevel === "high");
+	}
+});
+
+run("resolveRole — modelRef survives provider swap", () => {
+	const reg = parseRoleRegistry({
+		version: 1,
+		aliases: [{ alias: "opus", description: "d", modelRef: "Opus" }],
+		fallback: [],
+	});
+	const newCat = [{ provider: "future-lab", id: "claude-opus-9", name: "Opus 9" }];
+	const r = resolveRole("opus", reg, newCat);
+	assert("mref.swap", r.kind === "exact" && r.spec.provider === "future-lab", `got=${r.kind}`);
+});
+
+run("resolveRole — ambiguous modelRef fail-closed → error", () => {
+	const reg = parseRoleRegistry({
+		version: 1,
+		aliases: [{ alias: "fiver", description: "d", modelRef: "GPT-5" }],
+		fallback: [],
+	});
+	const r = resolveRole("fiver", reg, MODEL_CATALOG);
+	assert("mref.amb.kind", r.kind === "error", `got=${r.kind}`);
+	if (r.kind === "error") {
+		assert("mref.amb.reason", r.reason === "ambiguous-model-ref", `got=${r.reason}`);
+		assert("mref.amb.candidates", r.message.includes("gpt-5-codex"), `got="${r.message}"`);
+	}
+});
+
+run("resolveRole — missing modelRef → falls to fallback, else reports bind reason", () => {
+	const reg = parseRoleRegistry({
+		version: 1,
+		aliases: [
+			{ alias: "opus", description: "d", modelRef: "Opus" },
+			{ alias: "safe", description: "d", provider: "ap-codex", model: "gpt-5.6-sol" },
+		],
+		fallback: ["safe"],
+	});
+	// Catalog without any Opus-named model → opus unresolvable.
+	const noOpus = MODEL_CATALOG.filter((m) => !m.name.toLowerCase().includes("opus"));
+	const r = resolveRole("opus", reg, noOpus);
+	assert("mref.missing.falls.to.safe", r.kind === "fallback" && r.spec.model === "gpt-5.6-sol", `got=${JSON.stringify(r)}`);
+
+	// No fallback → error carries the bind reason, not generic unavailability.
+	const regNoFb = parseRoleRegistry({
+		version: 1,
+		aliases: [{ alias: "opus", description: "d", modelRef: "Opus" }],
+		fallback: [],
+	});
+	const r2 = resolveRole("opus", regNoFb, MODEL_CATALOG.filter((m) => !m.name.toLowerCase().includes("opus")));
+	assert("mref.missing.nofb.reason", r2.kind === "error" && r2.reason === "unresolvable-model-ref", `got=${JSON.stringify(r2)}`);
+});
+
+run("resolveRole — modelRef fallback binds like the primary", () => {
+	const reg = parseRoleRegistry({
+		version: 1,
+		aliases: [
+			{ alias: "wanted", description: "d", provider: "ghost", model: "nope" },
+			{ alias: "rescue", description: "d", modelRef: "5.6" },
+		],
+		fallback: ["rescue"],
+	});
+	const r = resolveRole("wanted", reg, MODEL_CATALOG);
+	assert("mref.fb", r.kind === "fallback" && r.spec.provider === "ap-codex" && r.spec.model === "gpt-5.6-sol", `got=${JSON.stringify(r)}`);
+});
+
+run("stepRoleCycle — skips unresolvable modelRef roles mid-cycle", () => {
+	const reg = parseRoleRegistry({
+		version: 1,
+		aliases: [
+			{ alias: "smol", provider: "ap-codex", model: "gpt-5-codex", description: "x" },
+			{ alias: "bust", description: "x", modelRef: "nonexistent" },
+			{ alias: "slow", provider: "anthropic", model: "claude-opus-4-1", description: "x" },
+		],
+		fallback: [],
+	});
+	const step = stepRoleCycle(["smol", "bust", "slow"], "smol", reg, MODEL_CATALOG);
+	assert("mref.cycle.skips", step.kind === "ok" && step.selector === "slow", `got=${JSON.stringify(step)}`);
+	assert("mref.cycle.skipped", JSON.stringify(step.skipped) === JSON.stringify(["bust"]), `got=${step.skipped.join(",")}`);
 });
 
 // ─── Report ──────────────────────────────────────────────────────────────

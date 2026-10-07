@@ -1,77 +1,18 @@
 {
-  "version": 1,
-  "aliases": [
-    {
-      "alias": "default",
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-5",
-      "thinkingLevel": "medium",
-      "description": "Default Sonnet with balanced thinking."
-    },
-    {
-      "alias": "compact",
-      "provider": "anthropic",
-      "model": "claude-haiku-4-5",
-      "thinkingLevel": "low",
-      "description": "Compact Haiku for low-stakes turns."
-    },
-    {
-      "alias": "smol",
-      "provider": "openai",
-      "model": "gpt-5-mini",
-      "thinkingLevel": "minimal",
-      "description": "Cheap, fast GPT-5 mini for trivial turns."
-    },
-    {
-      "alias": "slow",
-      "provider": "anthropic",
-      "model": "claude-opus-4-1",
-      "thinkingLevel": "high",
-      "description": "Deep Opus for hard problems."
-    },
-    {
-      "alias": "vision",
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-5",
-      "tools": ["read"],
-      "description": "Sonnet restricted to read-only tools."
-    },
-    {
-      "alias": "plan",
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-5",
-      "thinkingLevel": "high",
-      "description": "Sonnet with high thinking for planning."
-    },
-    {
-      "alias": "commit",
-      "provider": "openai",
-      "model": "gpt-5-mini",
-      "thinkingLevel": "low",
-      "description": "Small model for commit-message drafting."
-    },
-    {
-      "alias": "task",
-      "provider": "anthropic",
-      "model": "claude-haiku-4-5",
-      "thinkingLevel": "low",
-      "description": "Haiku for subagent task runs."
-    },
-    {
-      "alias": "advisor",
-      "provider": "anthropic",
-      "model": "claude-opus-4-1",
-      "thinkingLevel": "high",
-      "description": "Opus for advisory / second-opinion prompts."
-    },
-    {
-      "alias": "tiny",
-      "provider": "openai",
-      "model": "gpt-5-nano",
-      "thinkingLevel": "off",
-      "description": "Cheapest possible model — last-resort fallback."
-    }
-  ],
-  "fallback": ["default", "tiny"],
-  "cycle": ["smol", "default", "slow"]
+	"version": 1,
+	"aliases": [
+		{ "alias": "default", "modelRef": "Sonnet", "thinkingLevel": "medium", "description": "Whichever Sonnet the provider catalog exposes." },
+		{ "alias": "compact", "modelRef": "Haiku", "thinkingLevel": "low", "description": "Compact Haiku for low-stakes turns." },
+		{ "alias": "smol", "modelRef": "GPT-5 mini", "thinkingLevel": "minimal", "description": "Cheap, fast mini model for trivial turns." },
+		{ "alias": "slow", "modelRef": "Opus", "thinkingLevel": "high", "description": "Deep Opus for hard problems." },
+		{ "alias": "vision", "modelRef": "Sonnet", "tools": ["read"], "description": "Sonnet restricted to read-only tools." },
+		{ "alias": "plan", "modelRef": "Sonnet", "thinkingLevel": "high", "description": "Sonnet with high thinking for planning." },
+		{ "alias": "commit", "modelRef": "GPT-5 mini", "thinkingLevel": "low", "description": "Small model for commit-message drafting." },
+		{ "alias": "task", "modelRef": "Haiku", "thinkingLevel": "low", "description": "Haiku for subagent task runs." },
+		{ "alias": "advisor", "modelRef": "Opus", "thinkingLevel": "high", "description": "Opus for advisory / second-opinion prompts." },
+		{ "alias": "tiny", "modelRef": "nano", "thinkingLevel": "off", "description": "Cheapest possible model — last-resort fallback." },
+		{ "alias": "pinned", "provider": "ap-codex", "model": "gpt-5.6-sol", "thinkingLevel": "low", "description": "Explicit provider pin — survives even when the catalog renames models. Edit provider/model to match your setup." }
+	],
+	"fallback": ["default", "tiny"],
+	"cycle": ["smol", "default", "slow"]
 }

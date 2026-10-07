@@ -97,6 +97,7 @@ import {
 	formatRolePickerLabel,
 	isDirectModelSelector,
 	isThinkingLevel,
+	matchModelRef,
 	type ModelInfo,
 	normalizeCycle,
 	parseModelSelector,
@@ -624,7 +625,7 @@ export default function harness(pi: ExtensionAPI): void {
 				} else {
 					const registry = await loadRoleRegistry();
 					const scoped = buildScopedList(ctx);
-					const resolution = resolveRole(roleState.selector, registry, ctx.modelRegistry.getAvailable(), { scoped });
+					const resolution = resolveRole(roleState.selector, registry, availableModelInfos(ctx), { scoped });
 					if (resolution.kind !== "error") {
 						const applied = await applyRoleResolution(pi, resolution, ctx as ExtensionCommandContext);
 						if (!applied) roleState = { ...roleState, selector: undefined };
@@ -801,7 +802,7 @@ export default function harness(pi: ExtensionAPI): void {
 			const resolution = resolveRole(
 				selector,
 				stored.registry,
-				ctx.modelRegistry.getAvailable(),
+				availableModelInfos(ctx),
 				{ scoped: buildScopedList(ctx) },
 			);
 			if (resolution.kind === "error") {
@@ -981,45 +982,81 @@ export default function harness(pi: ExtensionAPI): void {
 					if (ctx.hasUI) {
 						await guidedRoleAdd(ctx);
 					} else {
-						ctx.ui.notify("usage: /role add <alias> <provider/model> [thinking] [description]", "warning");
+						ctx.ui.notify("usage: /role add <alias> <provider/model | \"ref name\"> [thinking] [description]", "warning");
 					}
 					return;
 				}
-				if (!modelRef.includes("/") || modelRef.includes(" ")) {
-					ctx.ui.notify("usage: /role add <alias> <provider/model> [thinking] [description]", "warning");
-					return;
-				}
-				const slash = modelRef.indexOf("/");
-				const provider = modelRef.slice(0, slash);
-				const model = modelRef.slice(slash + 1);
 				if (thinking && !isThinkingLevel(thinking)) {
 					ctx.ui.notify("thinking must be off, minimal, low, medium, high, xhigh, or max", "warning");
 					return;
 				}
-				const infos = availableModelInfos(ctx);
-				if (!infos.some((m) => m.provider === provider && m.id === model)) {
-					const search = searchModelInfos(infos, `${provider}/${model}`);
-					const suggestion = search.matches.length > 0
-						? `\nclosest matches:\n${search.matches.slice(0, 5).map((m) => `  ${formatModelLine(m)}`).join("\n")}`
-						: "\nuse /role models <query> to browse the catalog";
-					ctx.ui.notify(`model ${provider}/${model} is not available${suggestion}`, "warning");
-					return;
-				}
 				const hasThinking = thinking !== undefined && isThinkingLevel(thinking);
-				const description = parts.slice(hasThinking ? 4 : 3).join(" ").trim();
+				const description = parts.slice(hasThinking ? 4 : 3).join(" ").trim() || "";
+				const infos = availableModelInfos(ctx);
+				let spec: RoleSpec;
+				if (modelRef.includes("/")) {
+					// Pinned provider/model form.
+					const slash = modelRef.indexOf("/");
+					const provider = modelRef.slice(0, slash);
+					const model = modelRef.slice(slash + 1);
+					if (model.includes("/")) {
+						ctx.ui.notify("usage: /role add <alias> <provider/model | \"ref name\"> [thinking] [description]", "warning");
+						return;
+					}
+					if (!infos.some((m) => m.provider === provider && m.id === model)) {
+						const search = searchModelInfos(infos, `${provider}/${model}`);
+						const suggestion = search.matches.length > 0
+							? `\nclosest matches:\n${search.matches.slice(0, 5).map((m) => `  ${formatModelLine(m)}`).join("\n")}`
+							: "\nuse /role models <query> to browse the catalog";
+						ctx.ui.notify(`model ${provider}/${model} is not available${suggestion}`, "warning");
+						return;
+					}
+					spec = {
+						alias,
+						provider,
+						model,
+						description: description || `User role for ${provider}/${model}.`,
+						...(hasThinking && thinking !== undefined ? { thinkingLevel: thinking } : {}),
+					};
+				} else {
+					// Provider-exposed ref form (e.g. `Opus`, `GPT-5 mini`).
+					// Caveat the quote marks: ref names with spaces need them
+					// on the command line so `parts` groups correctly; single
+					// words work bare.
+					const m = matchModelRef(modelRef, infos);
+					if (m.kind === "missing") {
+						const search = searchModelInfos(infos, modelRef);
+						const suggestion = search.matches.length > 0
+							? `\nclosest matches:\n${search.matches.slice(0, 5).map((mm) => `  ${formatModelLine(mm)}`).join("\n")}`
+							: "\nuse /role models <query> to browse the catalog";
+						ctx.ui.notify(`no catalog model matches "${modelRef}"${suggestion}`, "warning");
+						return;
+					}
+					if (m.kind === "ambiguous") {
+						ctx.ui.notify(
+							`"${modelRef}" matches several catalog models; use the exact name or /role add ${alias} <provider/model> instead\n` +
+							m.candidates.slice(0, 5).map((c) => `  ${c.provider}/${c.id}`).join("\n") +
+							(m.candidates.length > 5 ? `\n  … and ${m.candidates.length - 5} more` : ""),
+							"warning",
+						);
+						return;
+					}
+					const matched = infos.find((mm) => mm.provider === m.provider && mm.id === m.id);
+					spec = {
+						alias,
+						modelRef,
+						description: description || `User role resolving "${modelRef}" in the catalog (currently ${m.provider}/${m.id}).`,
+						...(hasThinking && thinking !== undefined ? { thinkingLevel: thinking } : {}),
+					};
+				}
 				const stored = await loadStoredRoles();
 				const existed = stored.registry.aliases.some((a) => a.alias === alias);
-				const next = upsertRole(stored.registry, {
-					alias,
-					provider,
-					model,
-					description: description || `User role for ${provider}/${model}.`,
-					...(hasThinking && thinking !== undefined ? { thinkingLevel: thinking } : {}),
-				});
+
+				const next = upsertRole(stored.registry, spec);
 				const cycle = normalizeCycle(stored.cycle, next.aliases.map((a) => a.alias)).cycle;
 				const saved = await saveRoleRegistry(next, stored.active, cycle);
 				ctx.ui.notify(
-					`${existed ? "updated" : "added"} role ${alias} = ${provider}/${model}\nfile: ${saved}\nuse /role set ${alias} to switch`,
+					`${existed ? "updated" : "added"} role ${alias}${spec.provider && spec.model ? ` = ${spec.provider}/${spec.model}` : ` ~ "${modelRef}"`}\nfile: ${saved}\nuse /role set ${alias} to switch`,
 					"info",
 				);
 				return;
@@ -1118,7 +1155,7 @@ export default function harness(pi: ExtensionAPI): void {
 					stored.cycle,
 					roleState.selector ?? stored.active,
 					stored.registry,
-					ctx.modelRegistry.getAvailable(),
+					availableModelInfos(ctx),
 					{ scoped: buildScopedList(ctx) },
 				);
 				if (step.kind === "exhausted") {
@@ -1144,7 +1181,7 @@ export default function harness(pi: ExtensionAPI): void {
 				const resolution = resolveRole(
 					selector,
 					stored.registry,
-					ctx.modelRegistry.getAvailable(),
+					availableModelInfos(ctx),
 					{ scoped: buildScopedList(ctx) },
 				);
 				if (resolution.kind === "error" && resolution.reason === "unknown-role") {
@@ -1449,7 +1486,7 @@ export default function harness(pi: ExtensionAPI): void {
 		if (conversationText.length === 0) return {};
 
 		const compactRegistry = await loadRoleRegistry();
-		const compactResolution = resolveRole("compact", compactRegistry, ctx.modelRegistry.getAvailable(), {
+		const compactResolution = resolveRole("compact", compactRegistry, availableModelInfos(ctx), {
 			scoped: buildScopedList(ctx),
 		});
 		if (compactResolution.kind === "error" || !compactResolution.spec.provider || !compactResolution.spec.model) {
@@ -1661,7 +1698,7 @@ async function runSubagent(
 	const { profile, cwd } = plan;
 
 	const roleRegistry = await loadRoleRegistry();
-	const roleResolution = resolveRole(profile.role, roleRegistry, ctx.modelRegistry.getAvailable(), {
+	const roleResolution = resolveRole(profile.role, roleRegistry, availableModelInfos(ctx), {
 		scoped: buildScopedList(ctx),
 	});
 	if (roleResolution.kind === "error" || !roleResolution.spec.provider || !roleResolution.spec.model) {

@@ -16,7 +16,7 @@ Tracked as Beads `acidbath-9ih` / Linear [MIGHT-493](https://linear.app/acids/is
 | `/role set [alias\|provider/model[:thinking]]` | Switch the session model. Bare `/role set` opens an interactive picker (TUI/RPC). Direct `provider/model:high` selectors skip the registry for one-off switches. Every switch is verified: it is refused if the live model did not change. |
 | `/role next` | Cycle to the next role in the configured cycle (default `smol → default → slow`), skipping entries whose model is unavailable. |
 | `/role cycle [a,b,c]` | Show or set the cycle order that `/role next` walks. |
-| `/role add` | Bare `/role add` runs a guided flow (name → filter → pick model → thinking → description → switch now). With arguments: `/role add <alias> <provider/model> [thinking] [description]`. |
+| `/role add` | Bare `/role add` runs a guided flow (name → filter → pick model → thinking → description → switch now). With arguments: `/role add <alias> <provider/model | catalog-name> [thinking] [description]`. A catalog name (`Opus`, `gpt-5.6-sol`) creates a `modelRef` role that re-binds against the live catalog at each use; ambiguous names are rejected at add time with the candidate list. |
 | `/role remove <alias>` | Remove a role (also drops it from the cycle and the saved active selector). |
 | `/role info <alias>` | Full detail for one role: resolved model line, cost/context, thinking, tools, availability, fallback/cycle membership. |
 | `/role clear` | Restore the pre-role model, thinking level, and tools snapshot. |
@@ -50,6 +50,14 @@ loop, in the order a person actually uses it:
 1. **Discover** — `/role models sonnet` shows what exists and what it costs.
 2. **Bind** — `/role add` (guided picker, or typed
    `/role add fast ap-codex/gpt-5.6-sol low quick hops`) creates the alias.
+   A role may pin `provider/model` or reference the model the way the
+   provider names it — `/role add smrt gpt-5.6-sol` stores
+   `modelRef: "gpt-5.6-sol"`, re-bound against the live catalog at every
+   resolution (id exact→prefix, name exact→prefix, substring; equal-best
+   hits fail closed as `ambiguous-model-ref`, no match is
+   `unresolvable-model-ref` and falls through to the registry's fallback
+   chain before erroring). Refs survive a model migrating between
+   providers.
 3. **Switch** — `/role set` opens the picker; `/role set fast` or
    `/role next` flips models without ceremony; a direct
    `/role set anthropic/claude-opus-4-1:high` works without any alias.

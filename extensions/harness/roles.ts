@@ -35,10 +35,18 @@ export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhi
 
 export type RoleSpec = {
 	alias: string;
-	/** Required when no `ref`; omitted (or left undefined) when inheriting. */
+	/** Required when no `ref`/`modelRef`; omitted (or left undefined) when inheriting. */
 	provider?: string;
-	/** Required when no `ref`; omitted (or left undefined) when inheriting. */
+	/** Required when no `ref`/`modelRef`; omitted (or left undefined) when inheriting. */
 	model?: string;
+	/**
+	 * Free-text reference to a provider-exposed model, resolved against
+	 * the live catalog at use time — `"Opus"`, `"claude-haiku-4.5"`,
+	 * `"5-nano"`. Use enough of the name or id to be unambiguous; Match
+	 * against ids first, then human names. Exactly one of
+	 * provider+model / modelRef / ref must be set.
+	 */
+	modelRef?: string;
 	thinkingLevel?: ThinkingLevel;
 	tools?: string[];
 	/** Inherit model+thinking+tools from another alias in the same registry. */
@@ -46,10 +54,30 @@ export type RoleSpec = {
 	description: string;
 };
 
-/** RoleSpec narrowed so provider + model are present (no ref-only). */
+/** RoleSpec narrowed to a resolvable form whichever way it resolves. */
 export type ConcreteRoleSpec = RoleSpec & { provider: string; model: string };
 
 function isConcrete(spec: RoleSpec): spec is ConcreteRoleSpec {
+	return typeof spec.provider === "string" && spec.provider.length > 0 &&
+		typeof spec.model === "string" && spec.model.length > 0;
+}
+
+/**
+ * True when the spec does not itself pin provider+model but can still
+ * resolve at use time (a `modelRef` or a `ref` chain).
+ */
+function isResolvableLater(spec: RoleSpec): boolean {
+	return !isConcrete(spec) && ((typeof spec.modelRef === "string" && spec.modelRef.length > 0) || typeof spec.ref === "string");
+}
+
+/**
+ * True when a spec has been bound far enough to test against the
+ * catalog: pinned, or already carrying provider/model from a
+ * successful modelRef match.
+ */
+function isConcreteResolvable(
+	spec: RoleSpec,
+): spec is RoleSpec & { provider: string; model: string } {
 	return typeof spec.provider === "string" && spec.provider.length > 0 &&
 		typeof spec.model === "string" && spec.model.length > 0;
 }
@@ -74,7 +102,7 @@ export type RoleResolution =
 	| { kind: "fallback"; spec: RoleSpec; missing: string }
 	| {
 			kind: "error";
-			reason: "unknown-role" | "cycle" | "unavailable" | "no-fallback";
+			reason: "unknown-role" | "cycle" | "unavailable" | "no-fallback" | "ambiguous-model-ref" | "unresolvable-model-ref";
 			missing: string;
 			message: string;
 	  };
@@ -180,6 +208,7 @@ function parseRoleSpec(raw: unknown, idx: number): RoleSpec {
 	const provider = requireOptString(obj, "provider", path);
 	const model = requireOptString(obj, "model", path);
 	const ref = requireOptString(obj, "ref", path);
+	const modelRef = requireOptString(obj, "modelRef", path);
 	const tools = requireOptTools(obj, path);
 
 	let thinkingLevel: ThinkingLevel | undefined;
@@ -196,14 +225,28 @@ function parseRoleSpec(raw: unknown, idx: number): RoleSpec {
 		}
 	}
 
-	if (ref && (provider || model)) {
-		throw new RangeError(`${path}: ref roles must not set provider or model`);
+	// Exactly one binding form.
+	const forms = [
+		Boolean(ref), // inherit from another alias
+		Boolean(provider && model), // pin provider + model explicitly
+		Boolean(modelRef), // resolve a provider-exposed model ref at use time
+	];
+	if (forms.filter(Boolean).length > 1) {
+		throw new RangeError(`${path}: set exactly one of ref, provider+model, or modelRef`);
 	}
-	if (!ref && (!provider || !model)) {
-		throw new RangeError(`${path}: non-ref roles must set both provider and model`);
+	if (!ref && !modelRef && (!provider || !model)) {
+		throw new RangeError(
+			`${path}: non-ref roles must set provider+model or a modelRef (partial provider/model with neither is not accepted)`,
+		);
+	}
+	if (ref && (provider || model)) {
+		throw new RangeError(`${path}: ref roles must not also set provider or model`);
+	}
+	if (modelRef && (provider || model)) {
+		throw new RangeError(`${path}: modelRef roles must not set provider or model`);
 	}
 
-	return { alias, description, ref, provider, model, thinkingLevel, tools };
+	return { alias, description, ref, provider, model, modelRef, thinkingLevel, tools };
 }
 
 /**
@@ -284,71 +327,61 @@ export function defaultRoleRegistry(): RoleRegistry {
 		aliases: [
 			{
 				alias: "default",
-				provider: "anthropic",
-				model: "claude-sonnet-4-5",
+				modelRef: "Sonnet",
 				thinkingLevel: "medium",
-				description: "Default Sonnet with balanced thinking.",
+				description: "Whichever Sonnet the provider catalog exposes.",
 			},
 			{
 				alias: "compact",
-				provider: "anthropic",
-				model: "claude-haiku-4-5",
+				modelRef: "Haiku",
 				thinkingLevel: "low",
 				description: "Compact Haiku for low-stakes turns.",
 			},
 			{
 				alias: "smol",
-				provider: "openai",
-				model: "gpt-5-mini",
+				modelRef: "GPT-5 mini",
 				thinkingLevel: "minimal",
-				description: "Cheap, fast GPT-5 mini for trivial turns.",
+				description: "Cheap, fast mini model for trivial turns.",
 			},
 			{
 				alias: "slow",
-				provider: "anthropic",
-				model: "claude-opus-4-1",
+				modelRef: "Opus",
 				thinkingLevel: "high",
 				description: "Deep Opus for hard problems.",
 			},
 			{
 				alias: "vision",
-				provider: "anthropic",
-				model: "claude-sonnet-4-5",
+				modelRef: "Sonnet",
 				tools: ["read"],
 				description: "Sonnet restricted to read-only tools.",
 			},
 			{
 				alias: "plan",
-				provider: "anthropic",
-				model: "claude-sonnet-4-5",
+				modelRef: "Sonnet",
 				thinkingLevel: "high",
 				description: "Sonnet with high thinking for planning.",
 			},
 			{
 				alias: "commit",
-				provider: "openai",
-				model: "gpt-5-mini",
+				modelRef: "GPT-5 mini",
 				thinkingLevel: "low",
 				description: "Small model for commit-message drafting.",
 			},
 			{
 				alias: "task",
-				provider: "anthropic",
-				model: "claude-haiku-4-5",
+				modelRef: "Haiku",
 				thinkingLevel: "low",
 				description: "Haiku for subagent task runs.",
 			},
 			{
 				alias: "advisor",
-				provider: "anthropic",
-				model: "claude-opus-4-1",
+				modelRef: "Opus",
 				thinkingLevel: "high",
 				description: "Opus for advisory / second-opinion prompts.",
 			},
 			{
 				alias: "tiny",
-				provider: "openai",
-				model: "gpt-5-nano",
+				modelRef: "nano",
 				thinkingLevel: "off",
 				description: "Cheapest possible model — last-resort fallback.",
 			},
@@ -364,26 +397,18 @@ export function defaultRoleRegistry(): RoleRegistry {
  * mutates the input. Undefined override → copy unchanged.
  */
 export function applyThinkingOverride(spec: RoleSpec, thinkingLevel?: ThinkingLevel): RoleSpec {
-	if (thinkingLevel === undefined) {
-		return {
-			alias: spec.alias,
-			provider: spec.provider,
-			model: spec.model,
-			thinkingLevel: spec.thinkingLevel,
-			tools: spec.tools === undefined ? undefined : [...spec.tools],
-			ref: spec.ref,
-			description: spec.description,
-		};
-	}
-	return {
+	const base = {
 		alias: spec.alias,
 		provider: spec.provider,
 		model: spec.model,
-		thinkingLevel,
+		modelRef: spec.modelRef,
+		thinkingLevel: spec.thinkingLevel,
 		tools: spec.tools === undefined ? undefined : [...spec.tools],
 		ref: spec.ref,
 		description: spec.description,
 	};
+	if (thinkingLevel === undefined) return base;
+	return { ...base, thinkingLevel };
 }
 
 function aliasIndex(registry: RoleRegistry): Map<string, RoleSpec> {
@@ -399,6 +424,71 @@ function isAvailable(
 ): boolean {
 	for (const m of available) if (m.provider === provider && m.id === model) return true;
 	return false;
+}
+
+/**
+ * Match a free-text `modelRef` against the live catalog.
+ *
+ * Search order mirrors the catalog browser (`searchModelInfos`), so
+ * `"Opus"` behaves in a registry exactly as it does in `/role models
+ * Opus`: exact id, then id-prefix, then full `provider/id` prefix, then
+ * substring, then human-name hits.
+ *
+ * The ref intentionally has no provider component — `Opus` means
+ * whatever model Pi currently calls "Opus" regardless of which provider
+ * exposes it, which is what makes the reference survive provider swaps.
+ *
+ * Returns `undefined` when nothing matches. Returns `ambiguous` when
+ * several distinct models match with equal strength: a registry role
+ * must be deterministic, so the caller is asked to disambiguate rather
+ * than silently getting whichever the catalog happened to list first.
+ */
+export type ModelRefMatch =
+	| { kind: "ok"; provider: string; id: string }
+	| { kind: "ambiguous"; candidates: Array<{ provider: string; id: string }>; message: string }
+	| { kind: "missing"; message: string };
+
+export function matchModelRef(
+	query: string,
+	catalog: ReadonlyArray<{ provider: string; id: string; name?: string }>,
+): ModelRefMatch {
+	const q = query.trim().toLowerCase();
+	if (!q) return { kind: "missing", message: "modelRef must be a non-empty model name or id fragment" };
+
+	let best = Number.POSITIVE_INFINITY;
+	let hits: Array<{ provider: string; id: string; score: number }> = [];
+	for (const m of catalog) {
+		const id = m.id.toLowerCase();
+		const name = (m.name ?? "").toLowerCase();
+		let score: number;
+		if (id === q) score = 0;
+		else if (id.startsWith(q)) score = 1;
+		else if (name === q) score = 2;
+		else if (name.startsWith(q)) score = 3;
+		else if (id.includes(q)) score = 4;
+		else if (name.includes(q)) score = 5;
+		else continue;
+		if (score < best) {
+			best = score;
+			hits = [{ provider: m.provider, id: m.id, score }];
+		} else if (score === best) {
+			hits.push({ provider: m.provider, id: m.id, score });
+		}
+	}
+
+	if (hits.length === 0) {
+		return { kind: "missing", message: `no catalog model matches "${query}"` };
+	}
+	if (hits.length > 1) {
+		const shown = hits.slice(0, 5).map((h) => `${h.provider}/${h.id}`);
+		const more = hits.length > 5 ? ` (+${hits.length - 5} more)` : "";
+		return {
+			kind: "ambiguous",
+			candidates: hits.map((h) => ({ provider: h.provider, id: h.id })),
+			message: `modelRef "${query}" matches ${hits.length} models; name it more precisely: ${shown.join(", ")}${more}`,
+		};
+	}
+	return { kind: "ok", provider: hits[0].provider, id: hits[0].id };
 }
 
 // ─── resolver ────────────────────────────────────────────────────────────
@@ -422,7 +512,7 @@ function isAvailable(
 export function resolveRole(
 	selector: string,
 	registry: RoleRegistry,
-	available: ReadonlyArray<{ provider: string; id: string }>,
+	available: ReadonlyArray<{ provider: string; id: string; name?: string }>,
 	options?: { scoped?: ReadonlyArray<{ provider: string; id: string }> },
 ): RoleResolution {
 	const parsed = parseRoleSelector(selector);
@@ -448,21 +538,43 @@ export function resolveRole(
 			message: `role chain through "${parsed.alias}" contains a cycle`,
 		};
 	}
-	const concrete = walked.spec;
+	let concrete = walked.spec;
 	const via = walked.via;
 
-	// Thinking override applies to the resolved spec.
-	const withOverride = applyThinkingOverride(concrete, parsed.thinkingLevel);
+	// A modelRef role binds to a catalog model at use time. It needs the
+	// catalog to resolve, and ambiguous or missing refs fail closed
+	// rather than silently picking whichever model the catalog listed
+	// first — a role named "Opus" that lands on random mid-tier models
+	// would poison trust in the whole mechanism.
+	//
+	// A ref that fails to bind falls through to the fallback chain (same
+	// as any other unavailable spec); if no fallback satisfies, the
+	// resolution errors with the unresolvable-ref reason so the user
+	// sees *why* the role is dead rather than a generic "unavailable".
+	let refBind: { kind: "missing" | "ambiguous"; message: string } | undefined;
+	if (!isConcrete(concrete) && typeof concrete.modelRef === "string" && concrete.modelRef.length > 0) {
+		const m = matchModelRef(concrete.modelRef, available);
+		if (m.kind === "missing") {
+			refBind = { kind: "missing", message: `role "${parsed.alias}" modelRef "${concrete.modelRef}" unavailable: ${m.message}` };
+		} else if (m.kind === "ambiguous") {
+			refBind = { kind: "ambiguous", message: `role "${parsed.alias}" modelRef "${concrete.modelRef}": ${m.message}` };
+		} else {
+			concrete = { ...concrete, provider: m.provider, model: m.id };
+		}
+	}
 
 	const scoped = options?.scoped ?? [];
-	const scopedOk = scoped.length > 0 && isAvailable(concrete.provider, concrete.model, scoped);
-	const availOk = isAvailable(concrete.provider, concrete.model, available);
+	const availOk = isConcreteResolvable(concrete) &&
+		isAvailable(concrete.provider, concrete.model, scoped.length > 0 ? scoped : available);
 
-	if (scopedOk || availOk) {
+	if (availOk) {
+		// isConcreteResolvable already proved provider+model are strings.
+		const bound = concrete as RoleSpec & { provider: string; model: string };
+		const specOut = applyThinkingOverride(bound, parsed.thinkingLevel);
 		if (via.length > 0) {
-			return { kind: "inherited", spec: withOverride, via: via.join(" → ") };
+			return { kind: "inherited", spec: specOut, via: via.join(" → ") };
 		}
-		return { kind: "exact", spec: withOverride };
+		return { kind: "exact", spec: specOut };
 	}
 
 	// Fallback walk
@@ -472,16 +584,35 @@ export function resolveRole(
 		if (!fbSpec) continue;
 		const fbWalked = walkRef(fallbackAlias, registry, index);
 		if (fbWalked.kind === "cycle") continue;
-		const fbConcrete = fbWalked.spec;
-		const fbScopedOk = scoped.length > 0 && isAvailable(fbConcrete.provider, fbConcrete.model, scoped);
-		const fbAvailOk = isAvailable(fbConcrete.provider, fbConcrete.model, available);
-		if (fbScopedOk || fbAvailOk) {
-			const fbSpecOut = fbWalked.via.length > 0 ? { ...fbConcrete } : fbConcrete;
-			const fbWithOverride = applyThinkingOverride(fbSpecOut, parsed.thinkingLevel);
-			return { kind: "fallback", spec: fbWithOverride, missing: parsed.alias };
+		let fbConcrete = fbWalked.spec;
+		// A modelRef fallback binds against the catalog too; an ambiguous
+		// or missing ref simply drops it from the chain rather than
+		// rejecting the whole resolution.
+		if (!isConcrete(fbConcrete) && typeof fbConcrete.modelRef === "string" && fbConcrete.modelRef.length > 0) {
+			const fm = matchModelRef(fbConcrete.modelRef, available);
+			if (fm.kind !== "ok") continue;
+			fbConcrete = { ...fbConcrete, provider: fm.provider, model: fm.id };
+		}
+		const fbScopedOk = isConcreteResolvable(fbConcrete) &&
+			isAvailable(fbConcrete.provider, fbConcrete.model, scoped.length > 0 ? scoped : available);
+		if (fbScopedOk) {
+			const fbBound = fbConcrete as RoleSpec & { provider: string; model: string };
+			const fbSpecOut = fbWalked.via.length > 0 ? { ...fbBound } : fbBound;
+			return { kind: "fallback", spec: applyThinkingOverride(fbSpecOut, parsed.thinkingLevel), missing: parsed.alias };
 		}
 	}
 
+	// No fallback satisfied the run. Report the most precise reason:
+	// a failed modelRef bind beats no-fallback/unavailable because it
+	// explains WHY the role can't be used.
+	if (refBind) {
+		return {
+			kind: "error",
+			reason: refBind.kind === "ambiguous" ? "ambiguous-model-ref" : "unresolvable-model-ref",
+			missing: parsed.alias,
+			message: refBind.message,
+		};
+	}
 	if (registry.fallback.length === 0) {
 		return {
 			kind: "error",
@@ -500,15 +631,15 @@ export function resolveRole(
 }
 
 type WalkResult =
-	| { kind: "ok"; spec: ConcreteRoleSpec; via: string[] }
+	| { kind: "ok"; spec: RoleSpec; via: string[] }
 	| { kind: "cycle" };
 
 /**
- * Walk the optional `ref` chain starting at `alias`. Returns the first
- * concrete spec encountered, plus the ordered list of intermediate
- * aliases (empty when the alias itself is concrete). A chain that ends
- * at a ref-only spec, or one whose final spec lacks provider/model, is
- * reported as a cycle — it's malformed and can't be resolved.
+ * Walk the optional `ref` chain starting at `alias`. Returns the
+ * final non-ref spec (which may still carry a `modelRef` to bind
+ * against the catalog), plus the ordered list of intermediate aliases
+ * (empty when the alias itself is non-ref). A chain that ends at a
+ * spec with no binding at all is a cycle — it can't resolve.
  */
 function walkRef(alias: string, registry: RoleRegistry, index: Map<string, RoleSpec>): WalkResult {
 	const visited = new Set<string>();
@@ -520,10 +651,10 @@ function walkRef(alias: string, registry: RoleRegistry, index: Map<string, RoleS
 		const spec = index.get(current);
 		if (!spec) return { kind: "cycle" }; // unknown mid-chain; treat as cycle
 		if (!spec.ref) {
-			// Concrete (no ref) — provider+model must be set (parseRoleRegistry
-			// enforces this on parse).
-			if (isConcrete(spec)) return { kind: "ok", spec, via };
-			return { kind: "cycle" };
+			// No ref: a pinned provider/model or a modelRef — either way the
+			// caller may still need to bind it against the catalog, so hand
+			// the full spec back rather than demanding isConcrete().
+			return { kind: "ok", spec, via };
 		}
 		via.push(current);
 		current = spec.ref;
@@ -809,7 +940,7 @@ export function stepRoleCycle(
 	cycle: ReadonlyArray<string>,
 	currentSelector: string | undefined,
 	registry: RoleRegistry,
-	available: ReadonlyArray<{ provider: string; id: string }>,
+	available: ReadonlyArray<{ provider: string; id: string; name?: string }>,
 	options?: { scoped?: ReadonlyArray<{ provider: string; id: string }> },
 ): CycleStep {
 	if (cycle.length === 0) return { kind: "exhausted", tried: [] };
@@ -847,12 +978,20 @@ export function stepRoleCycle(
  * Two-line list entry for `/role list`. The marker prefixes the active
  * role; availability and thinking level make every entry self-describing.
  */
+	/** Human target for list/picker display of a spec's binding. */
+	function targetLabel(spec: RoleSpec): string {
+		if (spec.provider && spec.model) return `${spec.provider}/${spec.model}`;
+		if (spec.ref) return `→ ${spec.ref}`;
+		if (spec.modelRef) return `~ "${spec.modelRef}" (resolved from catalog at use)`;
+		return "unbound";
+	}
+
 export function formatRoleEntry(
 	spec: RoleSpec,
 	options: { available: boolean; active: boolean; modelName?: string },
 ): string {
 	const marker = options.active ? "▸ " : "  ";
-	const target = spec.provider && spec.model ? `${spec.provider}/${spec.model}` : `→ ${spec.ref ?? "?"}`;
+	const target = targetLabel(spec);
 	const name = options.modelName && options.modelName !== spec.model ? ` (${options.modelName})` : "";
 	const thinking = spec.thinkingLevel ? ` · thinking=${spec.thinkingLevel}` : "";
 	const tools = spec.tools && spec.tools.length > 0 ? ` · tools=[${spec.tools.join(", ")}]` : "";
@@ -865,8 +1004,7 @@ export function formatRoleEntry(
  * line each). Truncated with an ellipsis at `maxLen`.
  */
 export function formatRolePickerLabel(spec: RoleSpec, modelName?: string, maxLen = 100): string {
-	const target = spec.provider && spec.model ? `${spec.provider}/${spec.model}` : `→ ${spec.ref ?? "?"}`;
-	const bits = [spec.alias, target];
+	const bits = [spec.alias, targetLabel(spec)];
 	if (modelName && modelName !== spec.model) bits.push(modelName);
 	if (spec.thinkingLevel) bits.push(`thinking=${spec.thinkingLevel}`);
 	const line = `${bits.join(" · ")} — ${spec.description}`;
