@@ -95,8 +95,74 @@ export function parseMagicRegistry(input: unknown): MagicRegistry {
 
 // ─── ignore masks ────────────────────────────────────────────────────────
 
-// Fenced code: ``` ... ```
-const FENCED_RE = /```[\s\S]*?```/g;
+/**
+ * Mask every fenced code block, including the common cases the previous
+ * regex got wrong.
+ *
+ * The old ` ```...``` ` pattern had two defects, both confirmed by
+ * probing the matcher:
+ *
+ *   - an *unterminated* fence (the user is still typing, or a paste was
+ *     truncated) matched nothing, so keywords inside the code leaked
+ *     through as prose;
+ *   - `~~~` fences, which are equally valid Markdown, were not recognized
+ *     at all.
+ *
+ * Walking fence pairs line-by-line fixes both. A closing fence must use
+ * the same character and be at least as long as its opener, which is what
+ * lets a shorter stray run inside the body stay masked.
+ *
+ * Returns a copy with every fenced span replaced by spaces, preserving
+ * offsets and newlines.
+ */
+function maskFencedCode(src: string): string {
+	const chars = src.split("");
+	// Track the byte positions of each line's terminator so a fence body
+	// can be masked to the end of its last line.
+	const lines: Array<{ start: number; end: number; text: string }> = [];
+	let cursor = 0;
+	for (const line of src.split("\n")) {
+		lines.push({ start: cursor, end: cursor + line.length, text: line });
+		cursor += line.length + 1;
+	}
+
+	let openFence: { char: string; len: number; bodyStart: number } | undefined;
+	const masked = new Set<number>();
+	const maskRange = (from: number, to: number) => {
+		for (let i = from; i < to && i < chars.length; i++) {
+			if (chars[i] !== "\n") chars[i] = " ";
+			masked.add(i);
+		}
+	};
+
+	for (const line of lines) {
+		const m = /^[ \t]{0,3}(`{3,}|~{3,})[^\n]*$/.exec(line.text);
+		if (openFence === undefined) {
+			if (m) {
+				openFence = {
+					char: m[1][0] as string,
+					len: m[1].length,
+					bodyStart: line.end + 1,
+				};
+				// Mask the opening fence line itself.
+				maskRange(line.start, line.end);
+			}
+			continue;
+		}
+		// Inside a fence: only a matching, at-least-as-long run closes it.
+		if (m && m[1][0] === openFence.char && m[1].length >= openFence.len) {
+			maskRange(openFence.bodyStart, line.start);
+			maskRange(line.start, line.end);
+			openFence = undefined;
+		}
+	}
+	// An unterminated fence still masks to the end of the prompt.
+	if (openFence !== undefined) {
+		maskRange(openFence.bodyStart, src.length);
+	}
+	return chars.join("");
+}
+
 // Inline code: ` ... `
 const INLINE_CODE_RE = /`[^`\n]*`/g;
 // Path-like runs: starts with ./ ~/ file:// OR contains a `/` between
@@ -167,7 +233,7 @@ function maskHtmlContents(prompt: string, scannable: string): string {
  */
 function buildScannable(prompt: string): string {
 	let out = prompt;
-	out = out.replace(FENCED_RE, (block) => maskWithLength(block));
+	out = maskFencedCode(out);
 	out = out.replace(INLINE_CODE_RE, (block) => maskWithLength(block));
 	out = out.replace(PATH_LIKE_RE, (block) => maskWithLength(block));
 	out = out.replace(FILE_EXT_RE, (block) => maskWithLength(block));
@@ -266,4 +332,82 @@ export function formatMagicHints(matches: MagicMatch[]): string {
 		lines.push(`[magic:${m.id}] ${m.hint}`);
 	}
 	return lines.join("\n");
+}
+
+const MAGIC_WORD_RE = /^[a-z][a-z0-9]*([_-][a-z0-9]+)*$/;
+
+function copyKeyword(keyword: MagicKeyword): MagicKeyword {
+	const copy: MagicKeyword = {
+		id: keyword.id,
+		word: keyword.word,
+		hint: keyword.hint,
+		enabled: keyword.enabled,
+	};
+	if (keyword.raiseThinking !== undefined) copy.raiseThinking = keyword.raiseThinking;
+	return copy;
+}
+
+/** Normalize a user-entered magic word. Throws RangeError when it cannot match as prose. */
+export function normalizeMagicWord(input: string): string {
+	const word = input.trim().toLowerCase();
+	if (!MAGIC_WORD_RE.test(word)) {
+		throw new RangeError("magic word must be lowercase prose: letters, digits, and single _ or - separators");
+	}
+	return word;
+}
+
+/** Add an enabled keyword and turn matching on. Does not mutate the input registry. */
+export function addMagicKeyword(
+	registry: MagicRegistry,
+	input: { word: string; hint?: string; raiseThinking?: boolean },
+): MagicRegistry {
+	const word = normalizeMagicWord(input.word);
+	if (registry.keywords.some((keyword) => keyword.id === word || keyword.word.toLowerCase() === word)) {
+		throw new RangeError(`magic keyword "${word}" already exists`);
+	}
+	const hint = input.hint?.trim() || `Notice for ${word}.`;
+	const keyword: MagicKeyword = {
+		id: word,
+		word,
+		hint,
+		enabled: true,
+		...(input.raiseThinking ? { raiseThinking: true } : {}),
+	};
+	return {
+		enabled: true,
+		keywords: [...registry.keywords.map(copyKeyword), keyword],
+	};
+}
+
+/** Remove a keyword by id. Does not mutate the input registry. */
+export function removeMagicKeyword(registry: MagicRegistry, id: string): MagicRegistry {
+	if (!registry.keywords.some((keyword) => keyword.id === id)) {
+		throw new RangeError(`magic keyword "${id}" does not exist`);
+	}
+	return {
+		enabled: registry.enabled,
+		keywords: registry.keywords.filter((keyword) => keyword.id !== id).map(copyKeyword),
+	};
+}
+
+/**
+ * Enable or disable one existing keyword.
+ *
+ * Enabling a keyword also turns registry matching on; otherwise the
+ * keyword would still never match. Disabling the last enabled keyword
+ * turns matching *off*, so `/magic list` never reports the registry as
+ * "on" while nothing can match.
+ */
+export function setMagicKeywordEnabled(registry: MagicRegistry, id: string, enabled: boolean): MagicRegistry {
+	if (!registry.keywords.some((keyword) => keyword.id === id)) {
+		throw new RangeError(`magic keyword "${id}" does not exist`);
+	}
+	const keywords = registry.keywords.map((keyword) =>
+		keyword.id === id ? { ...copyKeyword(keyword), enabled } : copyKeyword(keyword),
+	);
+	const anyEnabled = keywords.some((keyword) => keyword.enabled);
+	return {
+		enabled: enabled ? true : anyEnabled,
+		keywords,
+	};
 }

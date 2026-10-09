@@ -2,7 +2,8 @@
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
-import { isGenericMessage, lyricFor, lyricKind, LYRIC_MAX_VISIBLE_WIDTH, type LyricKind } from "./ui-lyrics.ts";
+import { STATUS_LUMPY } from "./rendering/kaomoji.ts";
+import { isGenericMessage } from "./ui-lyrics.ts";
 
 export const ACTIVITY_STATUS_WIDGET_KEY = "acidbath-activity-status";
 
@@ -19,6 +20,8 @@ export interface ActivityStatusUpdate {
 	message?: string;
 	reasoningActive?: boolean;
 	reasoningPreview?: string;
+	/** Live child agents, already formatted as "name · task". Empty hides the line. */
+	agents?: readonly string[];
 }
 
 interface ActivityStatusState {
@@ -27,6 +30,7 @@ interface ActivityStatusState {
 	message: string;
 	reasoningActive: boolean;
 	reasoningPreview: string;
+	agents: readonly string[];
 }
 
 const INITIAL_STATE: ActivityStatusState = {
@@ -35,6 +39,7 @@ const INITIAL_STATE: ActivityStatusState = {
 	message: "settled",
 	reasoningActive: false,
 	reasoningPreview: "",
+	agents: [],
 };
 
 /** Return the latest provider-supplied thinking block from an assistant message. */
@@ -107,28 +112,33 @@ export class AcidbathActivityStatus implements Component {
 		const safeWidth = Math.max(1, Math.trunc(width));
 		if (this.cachedLines && this.cachedWidth === safeWidth) return this.cachedLines;
 		if (!this.state.visible) return [];
-		if (!this.state.reasoningActive && !this.isActiveKind()) return [];
+		const active = this.state.reasoningActive || this.isActiveKind();
+		const agents = this.state.agents.filter((agent) => agent.trim().length > 0);
+		const settledNote = !active && !isGenericMessage(this.state.message) ? this.state.message : "";
+		if (!active && agents.length === 0 && !settledNote) return [];
 
-		// Resolve the lyric set from the current lifecycle kind.
-		const rawKind = this.state.reasoningActive ? "reasoning" : this.state.kind;
-		const kind: LyricKind = lyricKind(rawKind);
-
-		let label: string;
-		if (this.noColor) {
-			label = rawKind;
-		} else {
-			const lyric = lyricFor(kind, this.glowPhase);
-			label = this.glowingLabel(truncateToWidth(lyric, LYRIC_MAX_VISIBLE_WIDTH));
+		const lines: string[] = [];
+		if (active) {
+			const phase = this.state.reasoningActive ? "reasoning" : this.state.kind;
+			const detail = this.state.reasoningActive
+				? this.state.reasoningPreview || ""
+				: isGenericMessage(this.state.message) ? "" : this.state.message;
+			const face = this.noColor ? "" : `${this.face()} `;
+			const label = this.phaseLabel(phase);
+			const detailText = detail ? `  ${this.muted(detail)}` : "";
+			lines.push(truncateToWidth(`${face}${label}${detailText}`, safeWidth));
 		}
-
-		// Detail is shown only when it adds specific information the lyric
-		// doesn't convey (file paths, commands, result stats).
-		const detail = this.state.reasoningActive
-			? this.state.reasoningPreview || ""
-			: isGenericMessage(this.state.message) ? "" : this.state.message;
-		const detailText = detail ? `  ${this.muted(detail)}` : "";
-
-		const lines = [truncateToWidth(`◇ ${label}${detailText}`, safeWidth)];
+		if (!active && settledNote) {
+			lines.push(truncateToWidth(this.muted(settledNote), safeWidth));
+		}
+		if (agents.length > 0) {
+			const shown = agents.slice(0, 3);
+			const extra = agents.length - shown.length;
+			const body = shown.join("  ·  ");
+			const suffix = extra > 0 ? `  +${extra}` : "";
+			const prefix = this.noColor ? "agents  " : `${this.theme.fg("muted", "agents")}  `;
+			lines.push(truncateToWidth(`${prefix}${body}${suffix}`, safeWidth));
+		}
 		this.cachedWidth = safeWidth;
 		this.cachedLines = lines;
 		return lines;
@@ -144,11 +154,19 @@ export class AcidbathActivityStatus implements Component {
 		this.clearRenderCache();
 	}
 
-	private glowingLabel(text: string): string {
-		if (this.noColor || this.reducedMotion) return text;
+	/** The one face in the interface. It marks the live phase and nowhere else. */
+	private face(): string {
+		if (this.reducedMotion) return STATUS_LUMPY;
 		const phase = GLOW_PHASES[this.glowPhase % GLOW_PHASES.length]!;
 		const color = phase === "accent" || phase === "bold" ? this.statusColor() : phase;
-		return phase === "bold" ? this.theme.bold(this.theme.fg(color, text)) : this.theme.fg(color, text);
+		const painted = phase === "bold" ? this.theme.bold(this.theme.fg(color, STATUS_LUMPY)) : this.theme.fg(color, STATUS_LUMPY);
+		return painted;
+	}
+
+	private phaseLabel(phase: string): string {
+		const label = PHASE_LABELS[phase] ?? phase;
+		if (this.noColor) return label;
+		return this.theme.fg(this.statusColor(), label);
 	}
 
 	private statusColor(): "accent" | "warning" | "success" {
@@ -172,10 +190,27 @@ export class AcidbathActivityStatus implements Component {
 	}
 }
 
+const PHASE_LABELS: Record<string, string> = {
+	preparing: "preparing",
+	listening: "listening",
+	reasoning: "reasoning",
+	composing: "composing",
+	tool: "running",
+	compacting: "compacting",
+	error: "error",
+	working: "working",
+	editing: "editing",
+};
+
+function sameAgents(left: readonly string[], right: readonly string[]): boolean {
+	return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function sameState(left: ActivityStatusState, right: ActivityStatusState): boolean {
 	return left.visible === right.visible
 		&& left.kind === right.kind
 		&& left.message === right.message
 		&& left.reasoningActive === right.reasoningActive
-		&& left.reasoningPreview === right.reasoningPreview;
+		&& left.reasoningPreview === right.reasoningPreview
+		&& sameAgents(left.agents, right.agents);
 }

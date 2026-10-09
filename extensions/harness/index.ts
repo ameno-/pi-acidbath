@@ -16,6 +16,10 @@
  * ADR-0001: this file MUST NOT call setHeader/setFooter/setEditorComponent
  * or wrap built-in tools. Acidbath keeps UI ownership. Compactor stays
  * independent under extensions/compactor/.
+ *
+ * Live sub-agent presence is the one exception to "no chrome": it is
+ * published through ctx.ui.setStatus so Acidbath can render it. Harness
+ * never draws the line itself.
  */
 
 import * as fs from "node:fs/promises";
@@ -36,8 +40,12 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import {
+	clampFanout,
 	defaultAgentRegistry,
+	describeRunError,
 	errEnvelope,
+	extractRunResult,
+	fanoutConcurrency,
 	findAgent,
 	type AgentProfile,
 	type AgentRegistry,
@@ -45,8 +53,8 @@ import {
 	listAgents,
 	okEnvelope,
 	parseAgentRegistry,
+	planAgentRun,
 	redactEnvelope,
-	truncateOutput,
 } from "./agents.ts";
 import {
 	buildCodexCompactPrompt,
@@ -62,12 +70,15 @@ import {
 	serializeHandoffSource,
 } from "./handoff.ts";
 import {
+	addMagicKeyword,
 	defaultMagicRegistry,
 	formatMagicHints,
 	type MagicMatch,
 	type MagicRegistry,
 	matchMagicWords,
 	parseMagicRegistry,
+	removeMagicKeyword,
+	setMagicKeywordEnabled,
 } from "./magic.ts";
 import {
 	RECAP_ENTRY_TYPE,
@@ -80,15 +91,34 @@ import {
 	serializeRecapSource,
 } from "./recap.ts";
 import {
+	type DirectModelSelector,
+	defaultCycle,
 	defaultRoleRegistry,
 	describeResolution,
+	formatModelLine,
+	formatModelPickerLabel,
+	formatRoleEntry,
+	formatRolePickerLabel,
+	isDirectModelSelector,
+	isThinkingLevel,
+	matchModelRef,
+	type ModelInfo,
+	normalizeCycle,
+	parseModelSelector,
+	parseRoleRegistry,
+	parseRoleSelector,
+	removeRole,
+	resolveRole,
 	type RoleRegistry,
 	type RoleResolution,
 	type RoleSnapshot,
 	type RoleSpec,
+	searchModelInfos,
+	stepRoleCycle,
+	suggestRoleAliases,
+	supportedThinkingLevels,
 	type ThinkingLevel,
-	parseRoleRegistry,
-	resolveRole,
+	upsertRole,
 } from "./roles.ts";
 import {
 	assistantTextFromComplete,
@@ -101,6 +131,16 @@ import {
 
 const MAGIC_STATE_ENTRY_TYPE = "harness-magic-state";
 const ROLE_STATE_ENTRY_TYPE = "harness-role-state";
+const ROLE_PICKER_MAX = 24;
+const MODELS_SHOWN_MAX = 25;
+/** Hard ceiling on `parallel[]` fan-out, independent of registry concurrency. */
+const SUBAGENT_MAX_FANOUT = 8;
+/** Extra slack after the profile timeout before a run is abandoned outright. */
+const SUBAGENT_ABORT_GRACE_MS = 5_000;
+/** Acidbath reads this footer status and draws the live child line. */
+export const SUBAGENT_STATUS_KEY = "acidbath-subagents";
+const liveSubagents = new Map<string, string>();
+
 const DEFAULT_HANDOFF_MAX_CHARS = 12000;
 const DEFAULT_RECAP_MAX_CHARS = 12000;
 const DEFAULT_HANDOFF_TIMEOUT_MS = 120_000;
@@ -120,7 +160,35 @@ function resolveRegistryPath(envName: string, defaultRelPath: string): string {
 	return path.resolve(process.cwd(), defaultRelPath);
 }
 
+function userConfigPath(envName: string, fileName: string): string {
+	const override = process.env[envName];
+	if (typeof override === "string" && override.length > 0) return override;
+	return path.join(getAgentDir(), "acidbath", fileName);
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+	try {
+		await fs.access(filePath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
+	await fs.mkdir(path.dirname(filePath), { recursive: true });
+	await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
 async function loadMagicRegistry(): Promise<MagicRegistry> {
+	const userPath = userConfigPath("PI_ACIDBATH_MAGIC_PATH", "magic.json");
+	if (process.env.PI_ACIDBATH_MAGIC_PATH || await fileExists(userPath)) {
+		try {
+			return parseMagicRegistry(await readJsonFile(userPath));
+		} catch {
+			if (process.env.PI_ACIDBATH_MAGIC_PATH) return defaultMagicRegistry();
+		}
+	}
 	const filePath = resolveRegistryPath("PI_ACIDBATH_MAGIC_PATH", "config/magic.example.json");
 	try {
 		const raw = await readJsonFile(filePath);
@@ -130,14 +198,93 @@ async function loadMagicRegistry(): Promise<MagicRegistry> {
 	}
 }
 
-async function loadRoleRegistry(): Promise<RoleRegistry> {
+async function saveMagicRegistry(registry: MagicRegistry): Promise<string> {
+	const filePath = userConfigPath("PI_ACIDBATH_MAGIC_PATH", "magic.json");
+	await writeJsonFile(filePath, registry);
+	return filePath;
+}
+
+type StoredRoleFile = { registry: RoleRegistry; active?: string; cycle: string[] };
+
+function isStringArrayValue(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((v) => typeof v === "string");
+}
+
+/** Read the optional `cycle` key next to a parsed registry, defaulting to the OMP-parity cycle. */
+function cycleFromFile(raw: unknown, registry: RoleRegistry): string[] {
+	const aliasNames = registry.aliases.map((a) => a.alias);
+	if (isRecord(raw) && isStringArrayValue(raw.cycle)) {
+		return normalizeCycle(raw.cycle, aliasNames).cycle;
+	}
+	return defaultCycle(aliasNames);
+}
+
+/**
+ * Last registry load failure, keyed by "roles" | "magic" | "agents".
+ * Set when a user-edited config fails to parse so the command that
+ * triggered the load can tell the user instead of quietly reverting to
+ * built-in defaults.
+ */
+const registryLoadErrors = new Map<string, string>();
+
+function noteRegistryLoadError(which: string, filePath: string, err: unknown): void {
+	const reason = err instanceof Error ? err.message : String(err);
+	registryLoadErrors.set(which, `${filePath}: ${reason}`);
+}
+
+function takeRegistryLoadError(which: string): string | undefined {
+	const message = registryLoadErrors.get(which);
+	if (message !== undefined) registryLoadErrors.delete(which);
+	return message;
+}
+
+async function loadStoredRoles(): Promise<StoredRoleFile> {
+	const userPath = userConfigPath("PI_ACIDBATH_ROLES_PATH", "roles.json");
+	if (process.env.PI_ACIDBATH_ROLES_PATH || await fileExists(userPath)) {
+		try {
+			const raw = await readJsonFile(userPath);
+			const active = isRecord(raw) && typeof raw.active === "string" ? raw.active : undefined;
+			const registry = parseRoleRegistry(raw);
+			return { registry, cycle: cycleFromFile(raw, registry), ...(active ? { active } : {}) };
+		} catch (err) {
+			// A user-edited registry that fails to parse must not be
+			// swallowed: silently reverting to the defaults makes their
+			// edits look ignored. Remember the reason and surface it the
+			// next time the roles UI renders.
+			noteRegistryLoadError("roles", userPath, err);
+			const registry = defaultRoleRegistry();
+			return { registry, cycle: defaultCycle(registry.aliases.map((a) => a.alias)) };
+		}
+	}
 	const filePath = resolveRegistryPath("PI_ACIDBATH_ROLES_PATH", "config/roles.example.json");
 	try {
 		const raw = await readJsonFile(filePath);
-		return parseRoleRegistry(raw);
+		const registry = parseRoleRegistry(raw);
+		return { registry, cycle: cycleFromFile(raw, registry) };
 	} catch {
-		return defaultRoleRegistry();
+		const registry = defaultRoleRegistry();
+		return { registry, cycle: defaultCycle(registry.aliases.map((a) => a.alias)) };
 	}
+}
+
+async function loadRoleRegistry(): Promise<RoleRegistry> {
+	return (await loadStoredRoles()).registry;
+}
+
+async function saveRoleRegistry(registry: RoleRegistry, active?: string, cycle?: string[]): Promise<string> {
+	const filePath = userConfigPath("PI_ACIDBATH_ROLES_PATH", "roles.json");
+	await writeJsonFile(filePath, {
+		version: registry.version,
+		aliases: registry.aliases,
+		fallback: registry.fallback,
+		...(cycle && cycle.length > 0 ? { cycle } : {}),
+		...(active ? { active } : {}),
+	});
+	return filePath;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
 }
 
 async function loadAgentRegistry(): Promise<AgentRegistry> {
@@ -161,12 +308,34 @@ type HarnessMagicState = {
 
 function isMagicState(value: unknown): value is HarnessMagicState {
 	if (!value || typeof value !== "object") return false;
-	const v = value as { registry?: unknown; pendingMatches?: unknown };
+	const v = value as { registry?: unknown; pendingMatches?: unknown; priorThinkingLevel?: unknown };
 	if (!v.registry || typeof v.registry !== "object") return false;
 	const reg = v.registry as { enabled?: unknown; keywords?: unknown };
 	if (typeof reg.enabled !== "boolean") return false;
 	if (!Array.isArray(reg.keywords)) return false;
+	// Previously any array passed, so a payload carrying `keywords: [null]`
+	// or `[{}]` was accepted as a live registry and every later access to
+	// `k.word` / `k.id` read off a non-object. Validate the shape instead.
+	for (const k of reg.keywords) {
+		if (!k || typeof k !== "object") return false;
+		const kw = k as { id?: unknown; word?: unknown; hint?: unknown; enabled?: unknown };
+		if (typeof kw.id !== "string" || kw.id.length === 0) return false;
+		if (typeof kw.word !== "string" || kw.word.length === 0) return false;
+		if (typeof kw.hint !== "string") return false;
+		if (typeof kw.enabled !== "boolean") return false;
+	}
 	if (!Array.isArray(v.pendingMatches)) return false;
+	for (const m of v.pendingMatches) {
+		if (!m || typeof m !== "object") return false;
+		const match = m as { id?: unknown; word?: unknown; hint?: unknown; raiseThinking?: unknown };
+		if (typeof match.id !== "string" || typeof match.word !== "string") return false;
+		if (typeof match.hint !== "string") return false;
+		if (match.raiseThinking !== undefined && typeof match.raiseThinking !== "boolean") return false;
+	}
+	// A restored state must never carry an in-flight thinking raise: the
+	// prior level belongs to a turn that no longer exists, and restoring it
+	// would strand the session on a stale level.
+	if (v.priorThinkingLevel !== undefined && typeof v.priorThinkingLevel !== "string") return false;
 	return true;
 }
 
@@ -178,13 +347,20 @@ type HarnessRoleState = {
 function isRoleState(value: unknown): value is HarnessRoleState {
 	if (!value || typeof value !== "object") return false;
 	const v = value as { selector?: unknown; snapshot?: unknown };
-	if (v.selector !== undefined && typeof v.selector !== "string") return false;
+	if (v.selector !== undefined && (typeof v.selector !== "string" || v.selector.length === 0)) return false;
 	if (v.snapshot !== undefined) {
 		const s = v.snapshot;
 		if (!s || typeof s !== "object") return false;
 		const ss = s as { thinkingLevel?: unknown; tools?: unknown };
-		if (typeof ss.thinkingLevel !== "string") return false;
+		// thinkingLevel must be one Pi accepts; an arbitrary string would be
+		// handed straight to setThinkingLevel and rejected at apply time.
+		if (!isThinkingLevel(ss.thinkingLevel)) return false;
+		// Tools must be strings — `tools` is forwarded to the session, and a
+		// junk entry would produce an opaque failure much later.
 		if (!Array.isArray(ss.tools)) return false;
+		for (const t of ss.tools) {
+			if (typeof t !== "string") return false;
+		}
 	}
 	return true;
 }
@@ -216,6 +392,61 @@ function findModelByPair(
 	return undefined;
 }
 
+/** Extract pure ModelInfo from a Pi registry model. */
+function modelInfoFromModel(m: { provider: string; id: string; name?: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean; input?: ReadonlyArray<string>; cost?: { input?: number; output?: number } }): ModelInfo {
+	return {
+		provider: m.provider,
+		id: m.id,
+		name: m.name,
+		contextWindow: m.contextWindow,
+		maxTokens: m.maxTokens,
+		reasoning: m.reasoning,
+		vision: Array.isArray(m.input) && m.input.includes("image"),
+		costIn: m.cost?.input,
+		costOut: m.cost?.output,
+	};
+}
+
+function availableModelInfos(ctx: ExtensionContext): ModelInfo[] {
+	return ctx.modelRegistry.getAvailable().map((m) => modelInfoFromModel(m));
+}
+
+/**
+ * Switch the live session model and verify it actually changed.
+ * Returns the "before → after" pair on success, undefined on failure
+ * (already notified).
+ */
+async function setVerifiedModel(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	provider: string,
+	modelId: string,
+): Promise<{ before: string; after: string } | undefined> {
+	const modelObj = ctx.modelRegistry.find(provider, modelId);
+	if (!modelObj) {
+		ctx.ui.notify(`model ${provider}/${modelId} is not registered`, "warning");
+		return undefined;
+	}
+	const before = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(none)";
+	const expected = `${provider}/${modelId}`;
+	const ok = await pi.setModel(modelObj);
+	const after = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(none)";
+	if (!ok || after !== expected) {
+		ctx.ui.notify(`model did not change (still ${after}; wanted ${expected})`, "warning");
+		return undefined;
+	}
+	return { before, after };
+}
+
+function applyThinkingAndTools(pi: ExtensionAPI, spec: { thinkingLevel?: ThinkingLevel; tools?: string[] }): void {
+	if (spec.thinkingLevel) {
+		pi.setThinkingLevel(spec.thinkingLevel);
+	}
+	if (Array.isArray(spec.tools) && spec.tools.length > 0) {
+		pi.setActiveTools(spec.tools);
+	}
+}
+
 function captureRoleSnapshot(pi: ExtensionAPI, ctx: ExtensionCommandContext): RoleSnapshot {
 	const snap: RoleSnapshot = {
 		thinkingLevel: ctx.thinkingLevel ?? "off",
@@ -232,38 +463,55 @@ async function applyRoleResolution(
 	pi: ExtensionAPI,
 	resolution: RoleResolution,
 	ctx: ExtensionCommandContext,
-): Promise<void> {
+): Promise<boolean> {
 	if (resolution.kind === "error") {
 		ctx.ui.notify(describeResolution(resolution), "warning");
-		return;
+		return false;
 	}
 	const spec: RoleSpec = resolution.spec;
 	if (!spec.provider || !spec.model) {
 		ctx.ui.notify(`role "${spec.alias}" did not resolve to a provider/model`, "warning");
-		return;
+		return false;
 	}
-	const target = findModelByPair(ctx.modelRegistry, spec.provider, spec.model);
-	if (!target) {
-		ctx.ui.notify(`model ${spec.provider}/${spec.model} not available`, "warning");
-		return;
+	if (!findModelByPair(ctx.modelRegistry, spec.provider, spec.model)) {
+		ctx.ui.notify(`model ${spec.provider}/${spec.model} is not available`, "warning");
+		return false;
 	}
-	const modelObj = ctx.modelRegistry.find(target.provider, target.id);
-	if (!modelObj) {
-		ctx.ui.notify(`model ${target.provider}/${target.id} not registered`, "warning");
-		return;
+	const switched = await setVerifiedModel(pi, ctx, spec.provider, spec.model);
+	if (!switched) return false;
+	applyThinkingAndTools(pi, spec);
+	ctx.ui.notify(`${describeResolution(resolution)}\nmodel ${switched.before} → ${switched.after}`, "info");
+	return true;
+}
+
+/**
+ * Apply a direct `provider/model[:thinking]` selector (no registry
+ * alias involved). Returns false on failure (already notified).
+ */
+async function applyDirectSelector(
+	pi: ExtensionAPI,
+	selector: DirectModelSelector,
+	ctx: ExtensionCommandContext,
+): Promise<boolean> {
+	if (!findModelByPair(ctx.modelRegistry, selector.provider, selector.model)) {
+		const search = searchModelInfos(
+			availableModelInfos(ctx),
+			`${selector.provider}/${selector.model}`,
+		);
+		const suggestion = search.matches.length > 0
+			? `\nclosest matches:\n${search.matches.slice(0, 5).map((m) => `  ${formatModelLine(m)}`).join("\n")}`
+			: "\nuse /role models <query> to see what is available";
+		ctx.ui.notify(`model ${selector.provider}/${selector.model} is not available${suggestion}`, "warning");
+		return false;
 	}
-	const ok = await pi.setModel(modelObj);
-	if (!ok) {
-		ctx.ui.notify(`setModel rejected ${target.provider}/${target.id}`, "warning");
-		return;
-	}
-	if (spec.thinkingLevel) {
-		pi.setThinkingLevel(spec.thinkingLevel);
-	}
-	if (Array.isArray(spec.tools) && spec.tools.length > 0) {
-		pi.setActiveTools(spec.tools);
-	}
-	ctx.ui.notify(describeResolution(resolution), "info");
+	const switched = await setVerifiedModel(pi, ctx, selector.provider, selector.model);
+	if (!switched) return false;
+	applyThinkingAndTools(pi, selector);
+	ctx.ui.notify(
+		`model ${switched.before} → ${switched.after}${selector.thinkingLevel ? ` (thinking=${selector.thinkingLevel})` : ""}`,
+		"info",
+	);
+	return true;
 }
 
 async function restoreSnapshot(
@@ -322,6 +570,11 @@ export default function harness(pi: ExtensionAPI): void {
 
 	// ─── session_start: restore persisted state ──────────────────────
 	pi.on("session_start", async (_event, ctx) => {
+		// A fresh session never inherits an in-flight magic turn: pending
+		// matches belong to a prompt that is gone, and a prior thinking
+		// raise belongs to a turn that already ended. Both are dropped
+		// explicitly rather than carried across.
+		magicState = { registry: defaultMagicRegistry(), pendingMatches: [] };
 		try {
 			const registry = await loadMagicRegistry();
 			magicState = { registry, pendingMatches: [] };
@@ -329,20 +582,25 @@ export default function harness(pi: ExtensionAPI): void {
 			magicState = { registry: defaultMagicRegistry(), pendingMatches: [] };
 		}
 
-		// Restore the latest persisted magic registry override.
+		// Restore the magic registry recorded in the session transcript, so
+		// a keyword added mid-session survives resuming that session. The
+		// user file is the base; the transcript wins when it holds a valid,
+		// newer registry (this is what `/magic add|remove|enable|disable`
+		// appends). Note the restore deliberately drops pendingMatches and
+		// any priorThinkingLevel.
 		try {
 			const branch = getRawBranch(ctx);
-			let latest: HarnessMagicState | undefined;
 			for (let i = branch.length - 1; i >= 0; i--) {
 				const entry = branch[i];
-				if (entry.type === "custom" && entry.customType === MAGIC_STATE_ENTRY_TYPE) {
-					if (isMagicState(entry.data)) latest = entry.data;
-					break;
+				if (entry.type !== "custom" || entry.customType !== MAGIC_STATE_ENTRY_TYPE) continue;
+				if (isMagicState(entry.data)) {
+					magicState = { registry: entry.data.registry, pendingMatches: [] };
 				}
+				break;
 			}
-			if (latest) magicState = { registry: latest.registry, pendingMatches: [] };
 		} catch {
-			// Keep the config-backed registry when persisted state is malformed.
+			// A malformed transcript entry leaves the file-loaded registry
+			// in place, which is the safe outcome.
 		}
 
 		// Restore role state from the latest harness-role-state custom entry.
@@ -359,12 +617,27 @@ export default function harness(pi: ExtensionAPI): void {
 				}
 			}
 			roleState = latest ?? {};
+			if (!roleState.selector) {
+				const stored = await loadStoredRoles();
+				if (stored.active) roleState = { ...roleState, selector: stored.active };
+			}
 			if (roleState.selector && ctx.model) {
-				const registry = await loadRoleRegistry();
-				const scoped = buildScopedList(ctx);
-				const resolution = resolveRole(roleState.selector, registry, ctx.modelRegistry.getAvailable(), { scoped });
-				if (resolution.kind !== "error") {
-					await applyRoleResolution(pi, resolution, ctx as ExtensionCommandContext);
+				if (isDirectModelSelector(roleState.selector)) {
+					try {
+						const direct = parseModelSelector(roleState.selector);
+						const applied = await applyDirectSelector(pi, direct, ctx as ExtensionCommandContext);
+						if (!applied) roleState = { ...roleState, selector: undefined };
+					} catch {
+						roleState = { ...roleState, selector: undefined };
+					}
+				} else {
+					const registry = await loadRoleRegistry();
+					const scoped = buildScopedList(ctx);
+					const resolution = resolveRole(roleState.selector, registry, availableModelInfos(ctx), { scoped });
+					if (resolution.kind !== "error") {
+						const applied = await applyRoleResolution(pi, resolution, ctx as ExtensionCommandContext);
+						if (!applied) roleState = { ...roleState, selector: undefined };
+					}
 				}
 			}
 		} catch {
@@ -374,8 +647,12 @@ export default function harness(pi: ExtensionAPI): void {
 
 	// ─── input: transform exact-prose magic matches ───────────────────
 	pi.on("input", async (event, _ctx) => {
-		const matches = matchMagicWords(event.text, magicState.registry);
-		magicState.pendingMatches = matches;
+		// Every turn begins with an `input` event, so this is the one place
+		// guaranteed to run between turns. Assigning (rather than
+		// accumulating) also drops anything a previous turn left behind: if
+		// that turn was aborted before `before_agent_start` consumed it, its
+		// hints would otherwise be injected into an unrelated later prompt.
+		magicState.pendingMatches = matchMagicWords(event.text, magicState.registry);
 		// Unchanged text per ADR-0004 — hints are appended in before_agent_start.
 		return { action: "transform", text: event.text, images: event.images };
 	});
@@ -412,18 +689,24 @@ export default function harness(pi: ExtensionAPI): void {
 			pi.setThinkingLevel(prior);
 			magicState.priorThinkingLevel = undefined;
 		}
+		// A turn can settle without `before_agent_start` ever consuming its
+		// matches (aborted input). Drop the leftovers here too, so they
+		// cannot reach the next turn.
+		magicState.pendingMatches = [];
 	});
 
 	// ─── /magic ───────────────────────────────────────────────────────
 	pi.registerCommand("magic", {
-		description: "Harness magic-word control (list|enable <id>|disable <id>)",
+		description: "Harness magic words (list|add <word>|remove <id>|enable <id>|disable <id>)",
 		handler: async (args, ctx) => {
 			const text = args.trim();
+			const filePath = userConfigPath("PI_ACIDBATH_MAGIC_PATH", "magic.json");
 			if (!text || text === "list") {
 				const lines: string[] = [];
-				lines.push(`magic registry: enabled=${magicState.registry.enabled}`);
+				lines.push(`magic matching: ${magicState.registry.enabled ? "on" : "off"}`);
+				lines.push(`file: ${filePath}`);
 				if (magicState.registry.keywords.length === 0) {
-					lines.push("  (no keywords)");
+					lines.push("  (no keywords — /magic add <word> [hint])");
 				} else {
 					for (const k of magicState.registry.keywords) {
 						lines.push(`  ${k.enabled ? "[x]" : "[ ]"} ${k.id} = ${k.word}${k.raiseThinking ? " (raise)" : ""}`);
@@ -434,54 +717,488 @@ export default function harness(pi: ExtensionAPI): void {
 			}
 			const parts = text.split(/\s+/);
 			const verb = parts[0];
-			const id = parts[1];
-			if ((verb === "enable" || verb === "disable") && (!id || !/^[\w-]+$/.test(id))) {
-				ctx.ui.notify("usage: /magic enable <id> | /magic disable <id>", "warning");
+			try {
+				if (verb === "add") {
+					const word = parts[1];
+					if (!word) {
+						ctx.ui.notify("usage: /magic add <word> [--raise] [hint]", "warning");
+						return;
+					}
+					const raise = parts.includes("--raise");
+					const hint = parts.slice(2).filter((part) => part !== "--raise").join(" ");
+					magicState.registry = addMagicKeyword(magicState.registry, {
+						word,
+						...(hint ? { hint } : {}),
+						...(raise ? { raiseThinking: true } : {}),
+					});
+					const saved = await saveMagicRegistry(magicState.registry);
+					pi.appendEntry<HarnessMagicState>(MAGIC_STATE_ENTRY_TYPE, magicState);
+					ctx.ui.notify(`added magic keyword ${word}; matching is on\nfile: ${saved}`, "info");
+					return;
+				}
+				if (verb === "remove") {
+					const id = parts[1];
+					if (!id) {
+						ctx.ui.notify("usage: /magic remove <id>", "warning");
+						return;
+					}
+					magicState.registry = removeMagicKeyword(magicState.registry, id);
+					await saveMagicRegistry(magicState.registry);
+					pi.appendEntry<HarnessMagicState>(MAGIC_STATE_ENTRY_TYPE, magicState);
+					ctx.ui.notify(`removed magic keyword ${id}`, "info");
+					return;
+				}
+				if (verb === "enable" || verb === "disable") {
+					const id = parts[1];
+					if (!id || !/^[\w-]+$/.test(id)) {
+						ctx.ui.notify("usage: /magic enable <id> | /magic disable <id>", "warning");
+						return;
+					}
+					magicState.registry = setMagicKeywordEnabled(magicState.registry, id, verb === "enable");
+					await saveMagicRegistry(magicState.registry);
+					pi.appendEntry<HarnessMagicState>(MAGIC_STATE_ENTRY_TYPE, magicState);
+					ctx.ui.notify(`magic: ${id} ${verb}d; matching ${magicState.registry.enabled ? "on" : "off"}`, "info");
+					return;
+				}
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				ctx.ui.notify(message, "warning");
 				return;
 			}
-			const next: MagicRegistry = {
-				enabled: magicState.registry.enabled,
-				keywords: magicState.registry.keywords.map((k) => {
-					if (k.id !== id) return { ...k };
-					return { ...k, enabled: verb === "enable" };
-				}),
-			};
-			magicState.registry = next;
-			pi.appendEntry<HarnessMagicState>(MAGIC_STATE_ENTRY_TYPE, magicState);
-			ctx.ui.notify(`magic: ${id} ${verb}d`, "info");
+			ctx.ui.notify("usage: /magic list|add <word>|remove <id>|enable <id>|disable <id>", "warning");
 		},
 	});
 
+	// ─── /role helpers (closure state) ─────────────────────────────────
+
+	/** Active role alias from the live or saved selector, if any. */
+	function activeRoleAlias(stored: StoredRoleFile): { selector: string | undefined; alias: string | undefined } {
+		const selector = roleState.selector ?? stored.active;
+		if (!selector) return { selector: undefined, alias: undefined };
+		if (isDirectModelSelector(selector)) return { selector, alias: undefined };
+		try {
+			return { selector, alias: parseRoleSelector(selector).alias };
+		} catch {
+			return { selector, alias: undefined };
+		}
+	}
+
+	/**
+	 * Shared switch path for /role set, /role next, and the guided add
+	 * flow. Accepts registry aliases (with optional :thinking) and
+	 * direct provider/model[:thinking] selectors. Persists the selector
+	 * and records the role-state entry on success.
+	 */
+	const applyRoleSelector = async (
+		selector: string,
+		stored: StoredRoleFile,
+		ctx: ExtensionCommandContext,
+	): Promise<boolean> => {
+		if (!roleState.snapshot) {
+			roleState.snapshot = captureRoleSnapshot(pi, ctx);
+		}
+		let applied: boolean;
+		if (isDirectModelSelector(selector)) {
+			try {
+				const direct = parseModelSelector(selector);
+				applied = await applyDirectSelector(pi, direct, ctx);
+			} catch (err) {
+				ctx.ui.notify(err instanceof Error ? err.message : String(err), "warning");
+				return false;
+			}
+		} else {
+			const resolution = resolveRole(
+				selector,
+				stored.registry,
+				availableModelInfos(ctx),
+				{ scoped: buildScopedList(ctx) },
+			);
+			if (resolution.kind === "error") {
+				const lines = [describeResolution(resolution)];
+				if (resolution.reason === "unknown-role") {
+					const suggestions = suggestRoleAliases(resolution.missing, stored.registry.aliases.map((a) => a.alias));
+					if (suggestions.length > 0) lines.push(`did you mean: ${suggestions.join(", ")}?`);
+					lines.push(`known roles: ${stored.registry.aliases.map((a) => a.alias).join(", ")}`);
+				}
+				ctx.ui.notify(lines.join("\n"), "warning");
+				return false;
+			}
+			applied = await applyRoleResolution(pi, resolution, ctx);
+		}
+		if (!applied) return false;
+		roleState.selector = selector;
+		await saveRoleRegistry(stored.registry, selector, stored.cycle);
+		pi.appendEntry<HarnessRoleState>(ROLE_STATE_ENTRY_TYPE, roleState);
+		return true;
+	};
+
+	/** Interactive /role add flow (TUI/RPC only). Each step can be cancelled. */
+	const guidedRoleAdd = async (ctx: ExtensionCommandContext): Promise<void> => {
+		const alias = (await ctx.ui.input("New role name", "single word, e.g. fast"))?.trim();
+		if (alias === undefined) return;
+		if (!alias || alias.includes(" ")) {
+			ctx.ui.notify("role name must be a single word without spaces", "warning");
+			return;
+		}
+		const query = (await ctx.ui.input("Filter models", "provider, id, or name (empty = all)"))?.trim();
+		if (query === undefined) return;
+
+		const infos = availableModelInfos(ctx);
+		const search = searchModelInfos(infos, query);
+		if (search.matches.length === 0) {
+			const ids = suggestRoleAliases(query, infos.map((m) => m.id), 5);
+			ctx.ui.notify(
+				`no models match "${query}"${ids.length ? `\ndid you mean: ${ids.join(", ")}?` : ""}`,
+				"warning",
+			);
+			return;
+		}
+		const shown = search.matches.slice(0, ROLE_PICKER_MAX);
+		const labels = shown.map((m) => formatModelPickerLabel(m));
+		const pickedLabel = await ctx.ui.select(
+			`Select model (${shown.length} of ${search.matches.length}${query ? ` matching "${query}"` : ""})`,
+			labels,
+		);
+		if (pickedLabel === undefined) {
+			ctx.ui.notify("role add cancelled", "info");
+			return;
+		}
+		const pickedIdx = labels.indexOf(pickedLabel);
+		const picked = pickedIdx >= 0 ? shown[pickedIdx] : undefined;
+		if (!picked) {
+			ctx.ui.notify("role add cancelled", "info");
+			return;
+		}
+
+		let thinkingLevel: ThinkingLevel | undefined;
+		const modelObj = ctx.modelRegistry.find(picked.provider, picked.id);
+		if (modelObj && modelObj.reasoning) {
+			const levels = supportedThinkingLevels(modelObj.thinkingLevelMap);
+			const levelLabels = ["(provider default)", ...levels];
+			const levelPicked = await ctx.ui.select("Thinking level", levelLabels);
+			if (levelPicked === undefined) {
+				ctx.ui.notify("role add cancelled", "info");
+				return;
+			}
+			const levelIdx = levelLabels.indexOf(levelPicked);
+			if (levelIdx > 0) {
+				const level = levels[levelIdx - 1];
+				if (level) thinkingLevel = level;
+			}
+		}
+
+		const descriptionInput = (await ctx.ui.input("Description (optional)", `what "${alias}" is for`))?.trim();
+		if (descriptionInput === undefined) return;
+		const description = descriptionInput || `User role for ${picked.provider}/${picked.id}.`;
+
+		const stored = await loadStoredRoles();
+		const existed = stored.registry.aliases.some((a) => a.alias === alias);
+		const next = upsertRole(stored.registry, {
+			alias,
+			provider: picked.provider,
+			model: picked.id,
+			description,
+			...(thinkingLevel ? { thinkingLevel } : {}),
+		});
+		const cycle = normalizeCycle(stored.cycle, next.aliases.map((a) => a.alias)).cycle;
+		const saved = await saveRoleRegistry(next, stored.active, cycle);
+		ctx.ui.notify(
+			`${existed ? "updated" : "added"} role ${alias} = ${picked.provider}/${picked.id}\nfile: ${saved}`,
+			"info",
+		);
+
+		const switchNow = await ctx.ui.confirm(
+			"Switch to it now?",
+			`Set the session model to ${alias} (${picked.provider}/${picked.id})?`,
+		);
+		if (switchNow) {
+			await applyRoleSelector(alias, { registry: next, cycle, active: stored.active }, ctx);
+		}
+	};
+
 	// ─── /role ────────────────────────────────────────────────────────
 	pi.registerCommand("role", {
-		description: "Harness role routing (list|set <alias>|clear|resolve <alias>)",
+		description: "Harness roles (list|models|add|remove|set|next|cycle|info|clear|resolve)",
 		handler: async (args, ctx) => {
 			const text = args.trim();
+			const filePath = userConfigPath("PI_ACIDBATH_ROLES_PATH", "roles.json");
+			const current = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(none)";
+			const parts = text.split(/\s+/);
+			const verb = parts[0];
+			const selector = parts.slice(1).join(" ").trim();
+
 			if (!text || text === "list") {
-				const registry = await loadRoleRegistry();
+				const stored = await loadStoredRoles();
+				const available = ctx.modelRegistry.getAvailable();
+				const active = activeRoleAlias(stored);
 				const lines: string[] = [];
-				lines.push(`roles (${registry.aliases.length}):`);
-				for (const spec of registry.aliases) {
-					lines.push(`  ${spec.alias} = ${spec.provider ?? "(ref " + (spec.ref ?? "?") + ")"} / ${spec.model ?? "?"}`);
+				lines.push(`model: ${current}${ctx.model?.name ? ` (${ctx.model.name})` : ""}`);
+				lines.push(`active role: ${active.selector ?? "(none)"}`);
+				lines.push(`file: ${filePath}`);
+				lines.push(`roles (${stored.registry.aliases.length}):`);
+				for (const spec of stored.registry.aliases) {
+					const modelName = spec.provider && spec.model
+						? available.find((m) => m.provider === spec.provider && m.id === spec.model)?.name
+						: undefined;
+					const present = spec.provider && spec.model
+						? available.some((m) => m.provider === spec.provider && m.id === spec.model)
+						: false;
+					lines.push(formatRoleEntry(spec, { available: present, active: active.alias === spec.alias, modelName }));
 				}
-				lines.push(`fallback: ${registry.fallback.join(", ") || "(none)"}`);
-				if (roleState.selector) lines.push(`active: ${roleState.selector}`);
+				lines.push(`fallback: ${stored.registry.fallback.join(", ") || "(none)"}`);
+				lines.push(`cycle (/role next): ${stored.cycle.join(" → ") || "(none)"}`);
+				const loadError = takeRegistryLoadError("roles");
+				if (loadError) {
+					lines.push(`WARNING: registry failed to load, showing built-in defaults — ${loadError}`);
+				}
+				lines.push('tips: "/role set" opens a picker · "/role next" cycles · "/role models <query>" browses the catalog');
+				ctx.ui.notify(lines.join("\n"), loadError ? "warning" : "info");
+				return;
+			}
+
+			if (verb === "models") {
+				const query = parts.slice(1).join(" ").trim();
+				const infos = availableModelInfos(ctx);
+				const search = searchModelInfos(infos, query);
+				if (search.matches.length === 0) {
+					const ids = suggestRoleAliases(query, infos.map((m) => m.id), 5);
+					ctx.ui.notify(
+						`no models match "${query}"${ids.length ? `\ndid you mean: ${ids.join(", ")}?` : ""}`,
+						"warning",
+					);
+					return;
+				}
+				const shown = search.matches.slice(0, MODELS_SHOWN_MAX);
+				const lines: string[] = [];
+				lines.push(
+					`models (${shown.length} of ${search.matches.length}${query ? ` matching "${query}"` : ""}; ${search.total} total):`,
+				);
+				for (const m of shown) lines.push(`  ${formatModelLine(m)}`);
+				if (search.matches.length > shown.length) {
+					lines.push(`  … and ${search.matches.length - shown.length} more — refine the query`);
+				}
+				lines.push("bind one with /role add <alias> <provider/model>");
 				ctx.ui.notify(lines.join("\n"), "info");
 				return;
 			}
-			const parts = text.split(/\s+/);
-			const verb = parts[0];
-			const selector = parts.slice(1).join(" ");
+
+			if (verb === "add") {
+				const alias = parts[1];
+				const modelRef = parts[2];
+				const thinking = parts[3];
+				if (!alias || !modelRef) {
+					if (ctx.hasUI) {
+						await guidedRoleAdd(ctx);
+					} else {
+						ctx.ui.notify("usage: /role add <alias> <provider/model | \"ref name\"> [thinking] [description]", "warning");
+					}
+					return;
+				}
+				if (thinking && !isThinkingLevel(thinking)) {
+					ctx.ui.notify("thinking must be off, minimal, low, medium, high, xhigh, or max", "warning");
+					return;
+				}
+				const hasThinking = thinking !== undefined && isThinkingLevel(thinking);
+				const description = parts.slice(hasThinking ? 4 : 3).join(" ").trim() || "";
+				const infos = availableModelInfos(ctx);
+				let spec: RoleSpec;
+				if (modelRef.includes("/")) {
+					// Pinned provider/model form.
+					const slash = modelRef.indexOf("/");
+					const provider = modelRef.slice(0, slash);
+					const model = modelRef.slice(slash + 1);
+					if (model.includes("/")) {
+						ctx.ui.notify("usage: /role add <alias> <provider/model | \"ref name\"> [thinking] [description]", "warning");
+						return;
+					}
+					if (!infos.some((m) => m.provider === provider && m.id === model)) {
+						const search = searchModelInfos(infos, `${provider}/${model}`);
+						const suggestion = search.matches.length > 0
+							? `\nclosest matches:\n${search.matches.slice(0, 5).map((m) => `  ${formatModelLine(m)}`).join("\n")}`
+							: "\nuse /role models <query> to browse the catalog";
+						ctx.ui.notify(`model ${provider}/${model} is not available${suggestion}`, "warning");
+						return;
+					}
+					spec = {
+						alias,
+						provider,
+						model,
+						description: description || `User role for ${provider}/${model}.`,
+						...(hasThinking && thinking !== undefined ? { thinkingLevel: thinking } : {}),
+					};
+				} else {
+					// Provider-exposed ref form (e.g. `Opus`, `GPT-5 mini`).
+					// Caveat the quote marks: ref names with spaces need them
+					// on the command line so `parts` groups correctly; single
+					// words work bare.
+					const m = matchModelRef(modelRef, infos);
+					if (m.kind === "missing") {
+						const search = searchModelInfos(infos, modelRef);
+						const suggestion = search.matches.length > 0
+							? `\nclosest matches:\n${search.matches.slice(0, 5).map((mm) => `  ${formatModelLine(mm)}`).join("\n")}`
+							: "\nuse /role models <query> to browse the catalog";
+						ctx.ui.notify(`no catalog model matches "${modelRef}"${suggestion}`, "warning");
+						return;
+					}
+					if (m.kind === "ambiguous") {
+						ctx.ui.notify(
+							`"${modelRef}" matches several catalog models; use the exact name or /role add ${alias} <provider/model> instead\n` +
+							m.candidates.slice(0, 5).map((c) => `  ${c.provider}/${c.id}`).join("\n") +
+							(m.candidates.length > 5 ? `\n  … and ${m.candidates.length - 5} more` : ""),
+							"warning",
+						);
+						return;
+					}
+					const matched = infos.find((mm) => mm.provider === m.provider && mm.id === m.id);
+					spec = {
+						alias,
+						modelRef,
+						description: description || `User role resolving "${modelRef}" in the catalog (currently ${m.provider}/${m.id}).`,
+						...(hasThinking && thinking !== undefined ? { thinkingLevel: thinking } : {}),
+					};
+				}
+				const stored = await loadStoredRoles();
+				const existed = stored.registry.aliases.some((a) => a.alias === alias);
+
+				const next = upsertRole(stored.registry, spec);
+				const cycle = normalizeCycle(stored.cycle, next.aliases.map((a) => a.alias)).cycle;
+				const saved = await saveRoleRegistry(next, stored.active, cycle);
+				ctx.ui.notify(
+					`${existed ? "updated" : "added"} role ${alias}${spec.provider && spec.model ? ` = ${spec.provider}/${spec.model}` : ` ~ "${modelRef}"`}\nfile: ${saved}\nuse /role set ${alias} to switch`,
+					"info",
+				);
+				return;
+			}
+
+			if (verb === "remove") {
+				const alias = parts[1];
+				if (!alias) {
+					ctx.ui.notify("usage: /role remove <alias>", "warning");
+					return;
+				}
+				try {
+					const stored = await loadStoredRoles();
+					const next = removeRole(stored.registry, alias);
+					const cycle = stored.cycle.filter((name) => name !== alias);
+					const active = stored.active === alias ? undefined : stored.active;
+					await saveRoleRegistry(next, active, cycle);
+					const live = activeRoleAlias(stored);
+					if (live.alias === alias) roleState = { ...roleState, selector: undefined };
+					ctx.ui.notify(
+						`removed role ${alias}${active === undefined && stored.active === alias ? " (was the saved active role)" : ""}`,
+						"info",
+					);
+				} catch (err) {
+					ctx.ui.notify(err instanceof Error ? err.message : String(err), "warning");
+				}
+				return;
+			}
+
+			if (verb === "info") {
+				const alias = parts[1];
+				if (!alias) {
+					ctx.ui.notify("usage: /role info <alias>", "warning");
+					return;
+				}
+				const stored = await loadStoredRoles();
+				const spec = stored.registry.aliases.find((a) => a.alias === alias);
+				if (!spec) {
+					const suggestions = suggestRoleAliases(alias, stored.registry.aliases.map((a) => a.alias));
+					ctx.ui.notify(
+						`role "${alias}" is not in the registry${suggestions.length ? `\ndid you mean: ${suggestions.join(", ")}?` : ""}`,
+						"warning",
+					);
+					return;
+				}
+				const available = ctx.modelRegistry.getAvailable();
+				const live = available.find((m) => m.provider === spec.provider && m.id === spec.model);
+				const active = activeRoleAlias(stored);
+				const lines = [formatRoleEntry(spec, {
+					available: live !== undefined,
+					active: active.alias === spec.alias,
+					modelName: live?.name,
+				})];
+				if (live) {
+					lines.push(`      ${formatModelLine(modelInfoFromModel(live))}`);
+				} else if (spec.provider && spec.model) {
+					lines.push(`      model ${spec.provider}/${spec.model} is not currently available`);
+				}
+				lines.push(`      in fallback chain: ${stored.registry.fallback.includes(alias) ? "yes" : "no"}`);
+				lines.push(`      in cycle: ${stored.cycle.includes(alias) ? "yes" : "no"}`);
+				ctx.ui.notify(lines.join("\n"), "info");
+				return;
+			}
+
+			if (verb === "cycle") {
+				const stored = await loadStoredRoles();
+				const arg = parts.slice(1).join(" ").trim();
+				if (!arg) {
+					ctx.ui.notify(
+						`cycle: ${stored.cycle.join(" → ") || "(none)"}\nset with: /role cycle <alias,alias,...> — order matters, /role next walks it`,
+						"info",
+					);
+					return;
+				}
+				const entries = arg.split(/[,\s]+/).map((s) => s.trim()).filter((s) => s.length > 0);
+				const { cycle, dropped } = normalizeCycle(entries, stored.registry.aliases.map((a) => a.alias));
+				if (cycle.length === 0 || dropped.length > 0) {
+					ctx.ui.notify(
+						`invalid cycle${dropped.length ? ` — unknown roles: ${dropped.join(", ")}` : ""}\nknown roles: ${stored.registry.aliases.map((a) => a.alias).join(", ")}`,
+						"warning",
+					);
+					return;
+				}
+				await saveRoleRegistry(stored.registry, stored.active, cycle);
+				ctx.ui.notify(`cycle set: ${cycle.join(" → ")}\nuse /role next to step through it`, "info");
+				return;
+			}
+
+			if (verb === "next") {
+				const stored = await loadStoredRoles();
+				if (stored.cycle.length === 0) {
+					ctx.ui.notify("no cycle configured; set one with /role cycle <alias,alias,...>", "warning");
+					return;
+				}
+				const step = stepRoleCycle(
+					stored.cycle,
+					roleState.selector ?? stored.active,
+					stored.registry,
+					availableModelInfos(ctx),
+					{ scoped: buildScopedList(ctx) },
+				);
+				if (step.kind === "exhausted") {
+					ctx.ui.notify(
+						`no role in the cycle (${stored.cycle.join(", ")}) is available${step.tried.length ? ` — tried: ${step.tried.join(", ")}` : ""}`,
+						"warning",
+					);
+					return;
+				}
+				const ok = await applyRoleSelector(step.selector, stored, ctx);
+				if (ok && step.skipped.length > 0) {
+					ctx.ui.notify(`skipped unavailable roles: ${step.skipped.join(", ")}`, "warning");
+				}
+				return;
+			}
 
 			if (verb === "resolve") {
 				if (!selector) {
 					ctx.ui.notify("usage: /role resolve <alias>", "warning");
 					return;
 				}
-				const registry = await loadRoleRegistry();
-				const scoped = buildScopedList(ctx);
-				const available = ctx.modelRegistry.getAvailable();
-				const resolution = resolveRole(selector, registry, available, { scoped });
+				const stored = await loadStoredRoles();
+				const resolution = resolveRole(
+					selector,
+					stored.registry,
+					availableModelInfos(ctx),
+					{ scoped: buildScopedList(ctx) },
+				);
+				if (resolution.kind === "error" && resolution.reason === "unknown-role") {
+					const suggestions = suggestRoleAliases(selector, stored.registry.aliases.map((a) => a.alias));
+					if (suggestions.length > 0) {
+						ctx.ui.notify(`${describeResolution(resolution)}\ndid you mean: ${suggestions.join(", ")}?`, "warning");
+						return;
+					}
+				}
 				ctx.ui.notify(describeResolution(resolution), resolution.kind === "error" ? "warning" : "info");
 				return;
 			}
@@ -491,36 +1208,53 @@ export default function harness(pi: ExtensionAPI): void {
 					await restoreSnapshot(pi, roleState.snapshot, ctx);
 				}
 				roleState = {};
+				const stored = await loadStoredRoles();
+				await saveRoleRegistry(stored.registry, undefined, stored.cycle);
 				pi.appendEntry<HarnessRoleState>(ROLE_STATE_ENTRY_TYPE, roleState);
-				ctx.ui.notify("role cleared", "info");
+				ctx.ui.notify(`role cleared; session model is ${ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(none)"}`, "info");
 				return;
 			}
 
 			if (verb === "set") {
-				if (!selector) {
-					ctx.ui.notify("usage: /role set <alias[:thinking]>", "warning");
-					return;
+				const stored = await loadStoredRoles();
+				let target = selector;
+				if (!target) {
+					if (!ctx.hasUI) {
+						ctx.ui.notify("no dialog UI in this mode; pass a role alias or provider/model selector", "warning");
+						return;
+					}
+					const available = ctx.modelRegistry.getAvailable();
+					const active = activeRoleAlias(stored);
+					const choices = stored.registry.aliases.map((spec) => {
+						const match = spec.provider && spec.model
+							? available.find((m) => m.provider === spec.provider && m.id === spec.model)
+							: undefined;
+						const isActive = active.alias === spec.alias;
+						const label = formatRolePickerLabel(spec, match?.name);
+						const state = match ? "" : "  · unavailable";
+						return isActive ? `${label}${state}  ◂ active` : `${label}${state}`;
+					});
+					const picked = await ctx.ui.select("Switch role", choices);
+					if (picked === undefined) {
+						ctx.ui.notify("role switch cancelled", "info");
+						return;
+					}
+					const pickedIdx = choices.indexOf(picked);
+					const pickedSpec = pickedIdx >= 0 ? stored.registry.aliases[pickedIdx] : undefined;
+					if (!pickedSpec) {
+						ctx.ui.notify("role switch cancelled", "info");
+						return;
+					}
+					target = pickedSpec.alias;
 				}
-				const registry = await loadRoleRegistry();
-				const scoped = buildScopedList(ctx);
-				const available = ctx.modelRegistry.getAvailable();
-				const resolution = resolveRole(selector, registry, available, { scoped });
-
-				if (resolution.kind === "error") {
-					ctx.ui.notify(describeResolution(resolution), "warning");
-					return;
-				}
-
-				if (!roleState.snapshot) {
-					roleState.snapshot = captureRoleSnapshot(pi, ctx);
-				}
-				await applyRoleResolution(pi, resolution, ctx);
-				roleState.selector = selector;
-				pi.appendEntry<HarnessRoleState>(ROLE_STATE_ENTRY_TYPE, roleState);
+				await applyRoleSelector(target, stored, ctx);
 				return;
 			}
 
-			ctx.ui.notify("usage: /role list|set <alias>|clear|resolve <alias>", "warning");
+			ctx.ui.notify(
+				"usage: /role list|models [query]|add|remove <alias>|set [alias|provider/model[:thinking]]|next|cycle [aliases]|info <alias>|clear|resolve <alias>",
+				"warning",
+			);
 		},
 	});
 
@@ -598,14 +1332,25 @@ export default function harness(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const result = await ctx.newSession({
-				parentSession: currentSessionFile,
-				withSession: async (replacementCtx) => {
-					replacementCtx.ui.setEditorText(edited);
-					replacementCtx.ui.notify("handoff ready — review and submit when ready", "info");
-				},
-			});
-			if (result.cancelled) {
+			// Child-session creation can fail (disk, a reload racing the
+			// call, a provider switch mid-flight). Surface it instead of
+			// letting the rejection escape the command handler, which
+			// would leave the user with a failed handoff and no reason.
+			let result: { cancelled?: boolean } | undefined;
+			try {
+				result = await ctx.newSession({
+					parentSession: currentSessionFile,
+					withSession: async (replacementCtx) => {
+						replacementCtx.ui.setEditorText(edited);
+						replacementCtx.ui.notify("handoff ready — review and submit when ready", "info");
+					},
+				});
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				ctx.ui.notify(`handoff failed to start new session: ${sanitizeCompactError(msg)}`, "error");
+				return;
+			}
+			if (result?.cancelled) {
 				ctx.ui.notify("new session cancelled", "info");
 			}
 		},
@@ -726,6 +1471,7 @@ export default function harness(pi: ExtensionAPI): void {
 				pi,
 				{ agent: agentName, task, nested: false },
 				ctx,
+				ctx.signal,
 			);
 			ctx.ui.notify(formatEnvelope(envelope), envelope.ok ? "info" : "warning");
 		},
@@ -748,14 +1494,24 @@ export default function harness(pi: ExtensionAPI): void {
 		if (conversationText.length === 0) return {};
 
 		const compactRegistry = await loadRoleRegistry();
-		const compactResolution = resolveRole("compact", compactRegistry, ctx.modelRegistry.getAvailable(), {
+		const compactResolution = resolveRole("compact", compactRegistry, availableModelInfos(ctx), {
 			scoped: buildScopedList(ctx),
 		});
 		if (compactResolution.kind === "error" || !compactResolution.spec.provider || !compactResolution.spec.model) {
+			// The user explicitly enabled this path and configured a
+			// "compact" role, so a broken one is worth reporting rather
+			// than falling through unnoticed.
+			ctx.ui.notify('acidbath codex compaction skipped: the "compact" role is not available — using native compaction', "warning");
 			return {};
 		}
 		const compactModel = ctx.modelRegistry.find(compactResolution.spec.provider, compactResolution.spec.model);
-		if (!compactModel) return {};
+		if (!compactModel) {
+			ctx.ui.notify(
+				`acidbath codex compaction skipped: model ${compactResolution.spec.provider}/${compactResolution.spec.model} is not available — using native compaction`,
+				"warning",
+			);
+			return {};
+		}
 
 		const previousSummary = typeof event.preparation?.previousSummary === "string"
 			? event.preparation.previousSummary
@@ -796,7 +1552,15 @@ export default function harness(pi: ExtensionAPI): void {
 		const firstKeptEntryId = event.preparation?.firstKeptEntryId ?? "";
 		const tokensBefore = event.preparation?.tokensBefore ?? 0;
 		const mapped = mapCompactResult({ summary, aborted, firstKeptEntryId, tokensBefore });
-		if (!mapped.handled) return {};
+		if (!mapped.handled) {
+			// Silently returning {} here falls back to Pi's native
+			// compaction, so the session still works — but the user has no
+			// way to learn that their configured compaction path was skipped
+			// (expired credentials, quota, a missing "compact" role). Say
+			// so, then let the native path run.
+			ctx.ui.notify(`acidbath codex compaction skipped: ${mapped.reason} — using native compaction`, "warning");
+			return {};
+		}
 
 		return {
 			compaction: {
@@ -825,7 +1589,10 @@ function subagentTool(pi: ExtensionAPI) {
 		cwd: Type.Optional(Type.String({ description: "Override working directory" })),
 	});
 	const SubagentParallel = Type.Object({
-		parallel: Type.Array(ParallelItem, { description: "Explicit parallel fan-out (respects registry maxConcurrency)" }),
+		parallel: Type.Array(ParallelItem, {
+			description: `Explicit parallel fan-out (respects registry maxConcurrency; at most ${SUBAGENT_MAX_FANOUT} items)`,
+			maxItems: SUBAGENT_MAX_FANOUT,
+		}),
 		nested: Type.Optional(Type.Boolean({ description: "Whether this is a nested call (default false)", default: false })),
 	});
 	const SubagentParams = Type.Union([SubagentSingle, SubagentParallel]);
@@ -835,26 +1602,42 @@ function subagentTool(pi: ExtensionAPI) {
 		label: "Subagent",
 		description: "Run an isolated Pi sub-session against a named agent profile. Single mode (agent + task) or explicit parallel mode (parallel[]). Nested fan-out requires the profile's allowNested=true.",
 		parameters: SubagentParams,
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<{ envelopes: ResultEnvelope[] }>> {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx): Promise<AgentToolResult<{ envelopes: ResultEnvelope[] }>> {
 			const envelopes: ResultEnvelope[] = [];
 			if ("parallel" in params && Array.isArray(params.parallel)) {
 				const registry = await loadAgentRegistry();
-				const items = params.parallel;
-				const concurrency = Math.max(1, Math.min(registry.maxConcurrency, items.length || 1));
+				const { items, dropped } = clampFanout(params.parallel, SUBAGENT_MAX_FANOUT);
+				if (dropped > 0) {
+					envelopes.push(
+						errEnvelope({
+							code: "invalid_args",
+							message: `parallel[] had ${dropped + items.length} items; only the first ${items.length} were run`,
+							traceId: "subagent",
+							agent: "<unknown>",
+							durationMs: 0,
+						}),
+					);
+				}
+				const concurrency = fanoutConcurrency(registry.maxConcurrency, items.length);
 				const results: ResultEnvelope[] = new Array(items.length);
 				let next = 0;
 				const workers = Array.from({ length: concurrency }, async () => {
 					while (true) {
+						if (signal?.aborted) return;
 						const idx = next++;
 						if (idx >= items.length) return;
 						const item = items[idx];
-						results[idx] = await runSubagent(pi, { agent: item.agent, task: item.task, cwd: item.cwd, nested: false }, ctx);
+						if (!item) continue;
+						results[idx] = await runSubagent(pi, { agent: item.agent, task: item.task, cwd: item.cwd, nested: false }, ctx, signal);
 					}
 				});
 				await Promise.all(workers);
-				envelopes.push(...results);
+				for (let i = 0; i < results.length; i++) {
+					const env = results[i];
+					if (env) envelopes.push(env);
+				}
 			} else if ("agent" in params && typeof params.agent === "string") {
-				envelopes.push(await runSubagent(pi, params, ctx));
+				envelopes.push(await runSubagent(pi, params, ctx, signal));
 			} else {
 				envelopes.push(
 					errEnvelope({
@@ -879,70 +1662,51 @@ async function runSubagent(
 	_pi: ExtensionAPI,
 	args: { agent: string; task: string; cwd?: string; nested?: boolean },
 	ctx: ExtensionContext,
+	signal?: AbortSignal,
 ): Promise<ResultEnvelope> {
 	const startedAt = Date.now();
 	const traceId = `${args.agent}-${startedAt.toString(36)}`;
 
 	const registry = await loadAgentRegistry();
-	const profile = findAgent(registry, args.agent);
-	if (!profile) {
-		return redactEnvelope(errEnvelope({
-			code: "unknown_agent",
-			message: `agent "${args.agent}" is not registered`,
-			traceId,
-			agent: args.agent,
-			durationMs: Date.now() - startedAt,
-		}));
-	}
 
-	if (!profile.allowNested && args.nested === true) {
-		return redactEnvelope(errEnvelope({
-			code: "nested_not_allowed",
-			message: `agent "${args.agent}" does not allow nested fan-out`,
-			traceId,
-			agent: args.agent,
-			durationMs: Date.now() - startedAt,
-		}));
-	}
-
-	if (profile.source === "project" && ctx.mode !== "tui") {
-		return redactEnvelope(errEnvelope({
-			code: "project_confirm_required",
-			message: "project-sourced agents require TUI confirmation",
-			traceId,
-			agent: args.agent,
-			durationMs: Date.now() - startedAt,
-		}));
-	}
-	if (profile.source === "project" && ctx.mode === "tui") {
-		const confirmed = await ctx.ui.confirm(
+	// Pure preflight (unit-tested in agents.ts): unknown agent, nested
+	// policy, project confirmation, cwd resolution.
+	let confirmed: boolean | undefined;
+	let plan = planAgentRun(registry, {
+		agent: args.agent,
+		sessionCwd: ctx.cwd,
+		canConfirm: ctx.mode === "tui",
+		...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
+		...(args.nested !== undefined ? { nested: args.nested } : {}),
+	});
+	if (!plan.ok && plan.code === "project_confirm_required") {
+		const approved = await ctx.ui.confirm(
 			"Run project agent?",
 			`Profile "${args.agent}" is project-sourced. Continue?`,
 		);
-		if (!confirmed) {
-			return redactEnvelope(errEnvelope({
-				code: "cancelled",
-				message: "user cancelled project agent run",
-				traceId,
-				agent: args.agent,
-				durationMs: Date.now() - startedAt,
-			}));
-		}
+		confirmed = approved;
+		plan = planAgentRun(registry, {
+			agent: args.agent,
+			sessionCwd: ctx.cwd,
+			canConfirm: ctx.mode === "tui",
+			confirmed,
+			...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
+			...(args.nested !== undefined ? { nested: args.nested } : {}),
+		});
 	}
-
-	const cwd = resolveCwd(profile, ctx.cwd, args.cwd);
-	if (!cwd) {
+	if (!plan.ok) {
 		return redactEnvelope(errEnvelope({
-			code: "no_cwd",
-			message: `profile "${args.agent}" requires an explicit cwd`,
+			code: plan.code,
+			message: plan.message,
 			traceId,
 			agent: args.agent,
 			durationMs: Date.now() - startedAt,
 		}));
 	}
+	const { profile, cwd } = plan;
 
 	const roleRegistry = await loadRoleRegistry();
-	const roleResolution = resolveRole(profile.role, roleRegistry, ctx.modelRegistry.getAvailable(), {
+	const roleResolution = resolveRole(profile.role, roleRegistry, availableModelInfos(ctx), {
 		scoped: buildScopedList(ctx),
 	});
 	if (roleResolution.kind === "error" || !roleResolution.spec.provider || !roleResolution.spec.model) {
@@ -966,6 +1730,7 @@ async function runSubagent(
 	}
 
 	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
+	noteSubagent(ctx, traceId, args.agent, args.task);
 	try {
 		const agentDir = getAgentDir();
 		const loader = new DefaultResourceLoader({
@@ -992,17 +1757,48 @@ async function runSubagent(
 		});
 		session = created.session;
 
+		// Two independent stop conditions: the profile timeout, and the
+		// caller's AbortSignal (tool cancellation / session teardown).
+		// `raceOutcome` also bounds the wait itself, so a session whose
+		// abort never settles still resolves instead of hanging forever.
 		let timedOut = false;
+		let cancelled = false;
 		const timer = setTimeout(() => {
 			timedOut = true;
 			void session?.abort().catch(() => undefined);
 		}, profile.timeoutMs);
+		const onExternalAbort = () => {
+			cancelled = true;
+			void session?.abort().catch(() => undefined);
+		};
+		if (signal) {
+			if (signal.aborted) onExternalAbort();
+			else signal.addEventListener("abort", onExternalAbort, { once: true });
+		}
 
 		try {
-			await session.prompt(args.task);
-			await session.waitForIdle();
+			await Promise.race([
+				(async () => {
+					await session?.prompt(args.task);
+					await session?.waitForIdle();
+				})(),
+				// Hard upper bound slightly above the profile timeout so
+				// a stuck abort path can never outlive the caller.
+				new Promise<void>((resolve) => setTimeout(resolve, profile.timeoutMs + SUBAGENT_ABORT_GRACE_MS)),
+			]);
 		} finally {
 			clearTimeout(timer);
+			if (signal) signal.removeEventListener("abort", onExternalAbort);
+		}
+
+		if (cancelled) {
+			return redactEnvelope(errEnvelope({
+				code: "cancelled",
+				message: `agent "${args.agent}" was cancelled by the caller`,
+				traceId,
+				agent: args.agent,
+				durationMs: Date.now() - startedAt,
+			}));
 		}
 
 		if (timedOut) {
@@ -1015,38 +1811,34 @@ async function runSubagent(
 			}));
 		}
 
-		const messages = session.messages;
-		const final = [...messages].reverse().find((m) => m.role === "assistant");
-		const textParts: string[] = [];
-		if (final && final.role === "assistant" && Array.isArray(final.content)) {
-			for (const part of final.content) {
-				if (part.type === "text" && typeof part.text === "string") textParts.push(part.text);
-			}
-		}
-		const output = truncateOutput(textParts.join("\n"), profile.maxOutputChars);
-
-		let usage: { input: number; output: number } | undefined;
-		if (final && final.role === "assistant" && final.usage) {
-			usage = { input: final.usage.input, output: final.usage.output };
+		const extraction = extractRunResult(session.messages, profile.maxOutputChars);
+		if (!extraction.ok) {
+			return redactEnvelope(errEnvelope({
+				code: extraction.code,
+				message: sanitizeCompactError(extraction.message),
+				traceId,
+				agent: args.agent,
+				durationMs: Date.now() - startedAt,
+			}));
 		}
 
 		return redactEnvelope(okEnvelope({
-			output,
+			output: extraction.output,
 			traceId,
 			agent: args.agent,
 			durationMs: Date.now() - startedAt,
-			...(usage ? { usage } : {}),
+			...(extraction.usage ? { usage: extraction.usage } : {}),
 		}));
 	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err);
 		return redactEnvelope(errEnvelope({
 			code: "execution_failed",
-			message: sanitizeCompactError(msg),
+			message: sanitizeCompactError(describeRunError(err)),
 			traceId,
 			agent: args.agent,
 			durationMs: Date.now() - startedAt,
 		}));
 	} finally {
+		clearSubagent(ctx, traceId);
 		try {
 			session?.dispose();
 		} catch {
@@ -1055,21 +1847,45 @@ async function runSubagent(
 	}
 }
 
-function resolveCwd(profile: AgentProfile, sessionCwd: string, explicit: string | undefined): string | undefined {
-	if (profile.cwdPolicy === "explicit") {
-		return explicit ?? profile.cwd;
-	}
-	if (profile.cwdPolicy === "profile") {
-		return profile.cwd ?? explicit ?? sessionCwd;
-	}
-	// session
-	return explicit ?? sessionCwd;
+function noteSubagent(ctx: ExtensionContext, traceId: string, agent: string, task: string): void {
+	const preview = task.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 48);
+	liveSubagents.set(traceId, preview ? `${agent} · ${preview}` : agent);
+	publishSubagents(ctx);
+}
+
+function clearSubagent(ctx: ExtensionContext, traceId: string): void {
+	liveSubagents.delete(traceId);
+	publishSubagents(ctx);
+}
+
+function publishSubagents(ctx: ExtensionContext): void {
+	if (ctx.mode !== "tui") return;
+	const lines = [...liveSubagents.values()];
+	ctx.ui.setStatus(SUBAGENT_STATUS_KEY, lines.length > 0 ? lines.join("\n") : undefined);
 }
 
 function formatEnvelope(env: ResultEnvelope): string {
-	if (env.ok && env.output) {
-		return `[${env.agent} ${env.traceId}] ${env.output}`;
+	if (env.ok) {
+		// A successful run can legitimately return empty output — an
+		// assistant turn with no text part, or output truncated away to
+		// nothing. Guarding on `env.output` alone made that fall through
+		// to the error branch and render "(no error message)", which
+		// reported a successful run as an unexplained failure.
+		const output = env.output && env.output.length > 0 ? env.output : "(no output)";
+		return `[${env.agent} ${env.traceId}] ${output}`;
 	}
-	const errMsg = env.error?.message ?? "(no error message)";
-	return `[${env.agent} ${env.traceId} error] ${errMsg}`;
+	// Surface the stable error code. Without it the user sees only prose,
+	// and a message that fails to render leaves no way to tell a timeout
+	// from a cancelled run from a missing role.
+	const code = env.error?.code ? ` ${env.error.code}:` : "";
+	const errMsg = env.error?.message ? briefError(env.error.message) : "(no error message)";
+	return `[${env.agent} ${env.traceId} error]${code} ${errMsg}`;
+}
+
+/** Code and status only. Provider bodies, headers, and fallback tables stay out. */
+function briefError(message: string): string {
+	const first = (message.split(/[\r\n]/, 1)[0] ?? "").replace(/\s+/g, " ").trim();
+	if (first.length === 0) return "(no error message)";
+	const head = first.split(":")[0]?.trim() ?? first;
+	return head.length > 120 ? `${head.slice(0, 119)}…` : head;
 }
