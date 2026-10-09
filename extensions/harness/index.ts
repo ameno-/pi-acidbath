@@ -16,6 +16,10 @@
  * ADR-0001: this file MUST NOT call setHeader/setFooter/setEditorComponent
  * or wrap built-in tools. Acidbath keeps UI ownership. Compactor stays
  * independent under extensions/compactor/.
+ *
+ * Live sub-agent presence is the one exception to "no chrome": it is
+ * published through ctx.ui.setStatus so Acidbath can render it. Harness
+ * never draws the line itself.
  */
 
 import * as fs from "node:fs/promises";
@@ -133,6 +137,10 @@ const MODELS_SHOWN_MAX = 25;
 const SUBAGENT_MAX_FANOUT = 8;
 /** Extra slack after the profile timeout before a run is abandoned outright. */
 const SUBAGENT_ABORT_GRACE_MS = 5_000;
+/** Acidbath reads this footer status and draws the live child line. */
+export const SUBAGENT_STATUS_KEY = "acidbath-subagents";
+const liveSubagents = new Map<string, string>();
+
 const DEFAULT_HANDOFF_MAX_CHARS = 12000;
 const DEFAULT_RECAP_MAX_CHARS = 12000;
 const DEFAULT_HANDOFF_TIMEOUT_MS = 120_000;
@@ -1722,6 +1730,7 @@ async function runSubagent(
 	}
 
 	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
+	noteSubagent(ctx, traceId, args.agent, args.task);
 	try {
 		const agentDir = getAgentDir();
 		const loader = new DefaultResourceLoader({
@@ -1829,12 +1838,30 @@ async function runSubagent(
 			durationMs: Date.now() - startedAt,
 		}));
 	} finally {
+		clearSubagent(ctx, traceId);
 		try {
 			session?.dispose();
 		} catch {
 			// ignore dispose failures
 		}
 	}
+}
+
+function noteSubagent(ctx: ExtensionContext, traceId: string, agent: string, task: string): void {
+	const preview = task.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 48);
+	liveSubagents.set(traceId, preview ? `${agent} · ${preview}` : agent);
+	publishSubagents(ctx);
+}
+
+function clearSubagent(ctx: ExtensionContext, traceId: string): void {
+	liveSubagents.delete(traceId);
+	publishSubagents(ctx);
+}
+
+function publishSubagents(ctx: ExtensionContext): void {
+	if (ctx.mode !== "tui") return;
+	const lines = [...liveSubagents.values()];
+	ctx.ui.setStatus(SUBAGENT_STATUS_KEY, lines.length > 0 ? lines.join("\n") : undefined);
 }
 
 function formatEnvelope(env: ResultEnvelope): string {
@@ -1851,6 +1878,14 @@ function formatEnvelope(env: ResultEnvelope): string {
 	// and a message that fails to render leaves no way to tell a timeout
 	// from a cancelled run from a missing role.
 	const code = env.error?.code ? ` ${env.error.code}:` : "";
-	const errMsg = env.error?.message ? env.error.message : "(no error message)";
+	const errMsg = env.error?.message ? briefError(env.error.message) : "(no error message)";
 	return `[${env.agent} ${env.traceId} error]${code} ${errMsg}`;
+}
+
+/** Code and status only. Provider bodies, headers, and fallback tables stay out. */
+function briefError(message: string): string {
+	const first = (message.split(/[\r\n]/, 1)[0] ?? "").replace(/\s+/g, " ").trim();
+	if (first.length === 0) return "(no error message)";
+	const head = first.split(":")[0]?.trim() ?? first;
+	return head.length > 120 ? `${head.slice(0, 119)}…` : head;
 }

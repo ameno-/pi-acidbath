@@ -14,7 +14,6 @@ import {
 	type KeybindingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import { AGENT_OUTPUT_ENTRY_TYPE, AgentOutputBanner, type AgentOutputEntryData } from "./ui-agent-output.js";
 import { AcidbathFooter } from "./ui-footer.js";
 import { findEditorBottomBorderIndex } from "./ui-gauge.js";
 import {
@@ -102,9 +101,6 @@ export default function acidbath(pi: ExtensionAPI): void {
 	let activityStatusWidget: AcidbathActivityStatus | undefined;
 	let lifecycleState: LifecycleState = { ...INITIAL_LIFECYCLE_STATE };
 	const statusTimings = new StatusTimingRecorder("settled", performance.now());
-	pi.registerEntryRenderer(AGENT_OUTPUT_ENTRY_TYPE, (entry, _options, theme) =>
-		new AgentOutputBanner(entry.data as AgentOutputEntryData, theme, !COLOR_ENABLED),
-	);
 
 	// Renderer callbacks must remain presentation-only. Lifecycle events below
 	// own labels so partial tool redraws cannot trigger recursive UI renders.
@@ -152,51 +148,36 @@ export default function acidbath(pi: ExtensionAPI): void {
 		const widget = welcomeWidget;
 		if (!widget) return;
 
-		const runtimePromise = pi.exec("pi", ["--version"], { timeout: 2_000 });
-
+		const parts: string[] = [];
 		try {
-			const result = await runtimePromise;
-			const version = `${result.stdout}\n${result.stderr}`.trim().split(/\\r?\\n/)[0] || "unknown";
-			setWelcomeCheck("runtime", result.code === 0 ? "ok" : "warn", version.replace(/^pi\\s*/i, ""));
+			const result = await pi.exec("pi", ["--version"], { timeout: 2_000 });
+			const version = `${result.stdout}\n${result.stderr}`.trim().split(/\r?\n/)[0] || "unknown";
+			parts.push(`runtime ${version.replace(/^pi\s*/i, "")}`);
 		} catch {
-			setWelcomeCheck("runtime", "warn", "unavailable");
+			parts.push("runtime unavailable");
 		}
-
 		try {
 			const available = ctx.modelRegistry.getAvailable().length;
 			const model = ctx.model?.name ?? ctx.model?.id ?? "none";
-			setWelcomeCheck("model", ctx.model ? "ok" : "warn", `${model} · ${available} available`);
+			parts.push(ctx.model ? `${model} · ${available}` : "no model");
 		} catch {
-			setWelcomeCheck("model", "warn", "unavailable");
+			parts.push("model unavailable");
 		}
-
 		try {
-			setWelcomeCheck("tools", "ok", `${pi.getActiveTools().length} active`);
+			parts.push(`${pi.getActiveTools().length} tools`);
 		} catch {
-			setWelcomeCheck("tools", "warn", "unavailable");
+			parts.push("tools unavailable");
 		}
+		// Settled, so the face stays hidden. The line is the preflight, once.
+		activityStatusWidget?.update({ kind: "settled", message: parts.join("  ·  "), agents: [] });
 	};
 
 	const installWelcome = (ctx: ExtensionContext): void => {
+		// The header already names the product. Preflight is one settled line
+		// on the activity rail, not a second card above the editor.
 		clearWelcome(ctx);
 		if (ctx.mode !== "tui") return;
-		const initial = initialWelcomeState(
-			ctx.cwd,
-			ctx.model?.name ?? ctx.model?.id ?? "no model",
-			contextSequence,
-			ctx.model?.cost,
-			thinkingLevel,
-		);
-		ctx.ui.setWidget(
-			WELCOME_WIDGET_KEY,
-			(tui, theme) => {
-				const widget = new AcidbathWelcome(tui, theme, initial);
-				welcomeWidget = widget;
-				void runPreflight(ctx);
-				return widget;
-			},
-			{ placement: "aboveEditor" },
-		);
+		void runPreflight(ctx);
 	};
 
 	const updateHeader = (): void => {
@@ -290,13 +271,21 @@ export default function acidbath(pi: ExtensionAPI): void {
 		ctx.ui.setHiddenThinkingLabel("");
 		// Keep Pi's current expansion preference. Forcing every native detail
 		// open makes each streaming frame re-render potentially huge tool output.
-		ctx.ui.setWorkingVisible?.(false);
+		const hideBuiltinLoader = (): void => {
+			ctx.ui.setWorkingVisible(false);
+			ctx.ui.setWorkingIndicator({ frames: [] });
+		};
+		hideBuiltinLoader();
+		// Pi restores its loader after session_start returns, and again when
+		// the idle status paints. Empty frames remove the face either way.
+		setTimeout(hideBuiltinLoader, 50);
+		setTimeout(hideBuiltinLoader, 600);
 		ctx.ui.setWidget(
 			ACTIVITY_STATUS_WIDGET_KEY,
 			(tui, theme) => {
 				const widget = new AcidbathActivityStatus(tui, theme, REDUCED_MOTION, !COLOR_ENABLED);
 				activityStatusWidget = widget;
-				widget.update({ visible: true, kind: "working", message: "settled" });
+				widget.update({ visible: true, kind: "settled", message: "settled" });
 				return widget;
 			},
 			{ placement: "aboveEditor" },
@@ -320,7 +309,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 		// lost to that initialization order.
 		installHeader();
 		queueMicrotask(installHeader);
-		ctx.ui.setFooter((tui, theme) => {
+		ctx.ui.setFooter((tui, theme, footerData) => {
 			const footer = new AcidbathFooter(tui, theme, ctx.cwd, !COLOR_ENABLED);
 			footerWidget = footer;
 			footer.update({
@@ -329,6 +318,19 @@ export default function acidbath(pi: ExtensionAPI): void {
 				contextVisible: true,
 				tokenContext,
 			});
+			const pullAgents = (): void => {
+				const raw = footerData.getExtensionStatuses().get("acidbath-subagents") ?? "";
+				activityStatusWidget?.update({
+					agents: raw.split("\n").map((line) => line.trim()).filter(Boolean),
+				});
+			};
+			pullAgents();
+			const timer = setInterval(pullAgents, 400);
+			const originalDispose = footer.dispose.bind(footer);
+			footer.dispose = () => {
+				clearInterval(timer);
+				originalDispose();
+			};
 			return footer;
 		});
 		installWelcome(ctx);
@@ -338,7 +340,6 @@ export default function acidbath(pi: ExtensionAPI): void {
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		clearWelcome(ctx);
-		pi.appendEntry(AGENT_OUTPUT_ENTRY_TYPE, { timestamp: Date.now(), prompt: event.prompt } satisfies AgentOutputEntryData);
 		recordStatus("preparing", "preparing");
 		const nextSummary = summarizeTask(event.prompt, sessionSummary);
 		if (nextSummary !== sessionSummary) {
@@ -374,6 +375,10 @@ export default function acidbath(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {
+		// Pi restores its built-in loader on session start, after extensions run.
+		// The activity rail is the one working indicator, so hide Pi's again.
+		ctx.ui.setWorkingVisible(false);
+		ctx.ui.setWorkingIndicator({ frames: [] });
 		recordStatus("agent-start", "starting");
 		generation = `run-${++contextSequence}`;
 		dispatchTokenEvent({ type: "agent_start", generation });

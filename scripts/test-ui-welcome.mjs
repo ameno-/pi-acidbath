@@ -20,16 +20,14 @@ assert.equal(modelCardFor("balanced", { input: 2, output: 3, cacheRead: 0, cache
 assert.equal(modelCardFor("expensive", { input: 8, output: 12, cacheRead: 0, cacheWrite: 0 }, "high").spendTier, "high");
 assert.ok(state.modelCard.modelName === "GPT-5.6");
 assert.ok(state.modelCard.cost === null);
-assert.ok(widget.render(120).some((line) => line.includes("cwd")));
-assert.ok(widget.render(120).some((line) => line.includes("GPT-5.6") && line.includes("cost unavailable") && line.includes("thinking:default")));
+assert.ok(widget.render(120).some((line) => line.includes("/Users/example/project") || line.includes("project")));
+assert.ok(!widget.render(120).some((line) => line.includes("GPT-5.6") || line.includes("cost unavailable")));
 assert.ok(widget.render(40).every((line) => visibleWidth(line) <= 40));
 widget.updateCheck("runtime", "ok", "v1");
 assert.ok(widget.render(120).some((line) => line.includes("✓ runtime v1")));
-assert.ok(!widget.render(120).some((line) => line.includes("╭─ STOIC") || line.includes("╰─")));
-assert.ok(widget.render(120).some((line) => line.includes(`— ${state.message.author}`)));
+assert.ok(!widget.render(120).some((line) => line.includes("╭─ STOIC") || line.includes("╰─") || line.includes(`— ${state.message.author}`)));
 widget.update({ modelCard: modelCardFor("priced-model", { input: 1.25, output: 8, cacheRead: 0, cacheWrite: 0 }, "high") });
-assert.ok(widget.render(120).some((line) => line.includes("$1.25/1M") && line.includes("$8/1M") && line.includes("thinking:high")));
-assert.ok(widget.render(120).some((line) => line.includes(state.message.text.split(" ").slice(0, 3).join(" "))));
+assert.ok(!widget.render(120).some((line) => line.includes("$1.25/1M") || line.includes(state.message.text.split(" ").slice(0, 3).join(" "))));
 widget.dispose();
 
-console.log("welcome widget: metadata, single-session quote, model card, and width safety pass");
+console.log("welcome widget: path, preflight, no quote, no duplicated model card, width safety pass");

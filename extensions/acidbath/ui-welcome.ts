@@ -117,22 +117,14 @@ export class AcidbathWelcome implements Component {
 		if (compact) {
 			lines.push(this.color("accent", this.fit("ACIDBATH", safeWidth)));
 			lines.push(this.fit(`${this.statusSummary()} · ${shortPath(this.state.cwd)}`, safeWidth));
-			lines.push(this.fit(this.formatModelCard(true), safeWidth));
 		} else {
-			lines.push(this.fit(this.color("accent", `cwd ${shortPath(this.state.cwd)}`), safeWidth));
-			lines.push(this.fit(this.formatModelCard(false), safeWidth));
+			lines.push(this.fit(this.color("accent", shortPath(this.state.cwd)), safeWidth));
 			lines.push(this.fit(this.formatChecks(safeWidth), safeWidth));
 		}
 
 		if (spacious) {
-			lines.push(this.fit(this.color("muted", `maintenance ${this.state.updateHint}`), safeWidth));
+			lines.push(this.fit(this.color("muted", this.state.updateHint), safeWidth));
 		}
-
-		const quoteWidth = Math.max(12, safeWidth - 2);
-		for (const quoteLine of wrapWords(this.state.message.text, quoteWidth - 2)) {
-			lines.push(this.fit(this.emphasis(this.color("warning", `“${quoteLine}”`)), safeWidth));
-		}
-		lines.push(this.fit(this.color("warning", `— ${this.state.message.author}`), safeWidth));
 		return lines.map((line) => truncateToWidth(line, safeWidth));
 	}
 

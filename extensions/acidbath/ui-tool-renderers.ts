@@ -9,8 +9,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { formatToolRow } from "./ui-tool-rows.js";
 import { summarizeToolOutput, targetForTool, type ToolOutputSummary } from "./ui-tool-output.js";
-import { statusGlyph, toolGlyph, animFrame, animFrameCount, STATUS_LUMPY } from "./rendering/kaomoji.js";
-import { subscribe, currentFrame } from "./rendering/motion.js";
+import { subscribe } from "./rendering/motion.js";
 
 type ToolMotionState = "pending" | "success" | "error";
 
@@ -81,7 +80,6 @@ class ToolRowComponent implements Component {
 	private hidden = false;
 	private cachedWidth: number | undefined;
 	private cachedLines: string[] | undefined;
-	private cachedFrame = -1;
 
 	constructor(row: ToolRowState, theme: Theme, noColor: boolean, slot: "call" | "result") {
 		this.row = row;
@@ -117,16 +115,13 @@ class ToolRowComponent implements Component {
 	render(width: number): string[] {
 		if (this.hidden) return [];
 		const safeWidth = Math.max(1, Math.trunc(width));
-		const frame = this.row.settled ? 0 : currentFrame();
-		if (this.cachedLines && this.cachedWidth === safeWidth && this.cachedFrame === frame) return this.cachedLines;
+		if (this.cachedLines && this.cachedWidth === safeWidth) return this.cachedLines;
 
-		const settled = this.row.settled;
-		const status = this.noColor ? "" : (settled ? statusGlyph(this.row.status, true) : STATUS_LUMPY);
-		const tool = this.noColor ? "" : (settled ? toolGlyph(this.row.toolName) : animFrame(this.row.toolName, frame));
+		const status = this.noColor ? "" : statusMark(this.row.status);
 		const plain = formatToolRow({
 			width: safeWidth,
 			statusGlyph: status,
-			toolGlyph: tool,
+			toolGlyph: "",
 			toolName: this.row.toolName,
 			target: this.row.target,
 			status: this.row.status,
@@ -136,11 +131,9 @@ class ToolRowComponent implements Component {
 		});
 
 		const lifecycleColor = this.row.status === "error" ? "error" : this.row.status === "success" ? "success" : "accent";
-		let styled = plain;
-		if (!this.noColor && status && tool) {
-			const afterTool = plain.slice(status.length + 1 + tool.length);
-			styled = `${this.theme.fg(lifecycleColor, status)} ${this.theme.fg("accent", tool)}${afterTool}`;
-		}
+		const styled = !this.noColor && status && plain.startsWith(`${status} `)
+			? `${this.theme.fg(lifecycleColor, status)}${plain.slice(status.length)}`
+			: plain;
 
 		const lines = [tuiTruncateToWidth(styled, safeWidth, "…")];
 		const indent = "  ";
@@ -156,7 +149,6 @@ class ToolRowComponent implements Component {
 		}
 
 		this.cachedWidth = safeWidth;
-		this.cachedFrame = frame;
 		this.cachedLines = lines;
 		return lines;
 	}
@@ -169,8 +161,14 @@ class ToolRowComponent implements Component {
 	private clearCache(): void {
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
-		this.cachedFrame = -1;
 	}
+}
+
+/** One mark for every tool. Faces stay out of the transcript. */
+function statusMark(status: ToolMotionState): string {
+	if (status === "success") return "·";
+	if (status === "error") return "×";
+	return "◦";
 }
 
 function rendererState(context: AnyRendererContext): AcidbathRendererState {
@@ -207,8 +205,10 @@ function getOrCreateRow(
 }
 
 function ensureMotion(row: ToolRowState, context: AnyRendererContext, animate: boolean): void {
-	if (!animate || !context.executionStarted || row.hasResult || row.unsubscribe || animFrameCount(row.toolName) === 0) return;
-	row.unsubscribe = subscribe(context.toolCallId, context.invalidate);
+	// Keep the shared clock subscribed while a call is live so settlement
+	// still releases it. The row itself no longer animates a face.
+	if (!animate || !context.executionStarted || row.hasResult || row.unsubscribe) return;
+	row.unsubscribe = subscribe(context.toolCallId, () => undefined);
 }
 
 function reusableComponent(
