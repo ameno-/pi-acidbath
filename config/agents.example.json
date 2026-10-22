@@ -7,12 +7,7 @@
       "description": "Read-only reconnaissance agent. Finds files, grep, summarize.",
       "role": "task",
       "instructions": "You are scout. Inspect the repository with read/grep/find/ls only. Return a concise summary; no edits, no writes.",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ],
+      "tools": ["read", "grep", "find", "ls"],
       "cwdPolicy": "session",
       "timeoutMs": 120000,
       "maxOutputChars": 50000,
@@ -24,55 +19,12 @@
       "description": "Second-opinion review agent. Read-only, advisory output.",
       "role": "advisor",
       "instructions": "You are reviewer. Read the provided context and emit a concise advisory verdict. Do not run side-effect tools.",
-      "tools": [
-        "read",
-        "grep"
-      ],
+      "tools": ["read", "grep"],
       "cwdPolicy": "session",
       "timeoutMs": 120000,
       "maxOutputChars": 50000,
       "allowNested": false,
       "source": "builtin"
-    },
-    {
-      "name": "implementer",
-      "description": "Execution lane. Makes surgical code changes and proves them with the repo's own checks.",
-      "role": "task",
-      "instructions": "You are an implementation sub-agent. Make the smallest change that satisfies the task and nothing more. Do not reformat, reorder, or improve adjacent code. Do not run git commit, git checkout, git stash, or git clean. Run the project's own typecheck and verification commands before reporting, and report their real output rather than a summary of intent. If a check fails, your change is wrong: fix the change, never weaken the check. State assumptions explicitly and stop to ask when the task is ambiguous.",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls",
-        "bash",
-        "edit",
-        "write"
-      ],
-      "cwdPolicy": "session",
-      "timeoutMs": 900000,
-      "maxOutputChars": 60000,
-      "allowNested": false,
-      "source": "user"
-    },
-    {
-      "name": "tui-expert",
-      "description": "Terminal UI lane. Builds renderers and the tooling that proves them correct.",
-      "role": "task",
-      "instructions": "You are a terminal UI sub-agent. Design for fixed-position, always-animating surfaces: every element keeps a stable slot and transitions within it, so nothing pops into or out of view. Keep rendering pure and deterministic so it can be asserted headlessly: no ambient clock, no wall time, no map-order dependence. Never add a feature without a way to verify it, and verify with the repo's existing harness rather than asserting success in prose. Make the smallest change that satisfies the task. Do not run git commit, git checkout, git stash, or git clean. Report what you actually observed, including what you could not verify.",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls",
-        "bash",
-        "edit",
-        "write"
-      ],
-      "cwdPolicy": "session",
-      "timeoutMs": 900000,
-      "maxOutputChars": 60000,
-      "allowNested": false,
-      "source": "user"
     }
   ]
 }

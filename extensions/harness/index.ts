@@ -141,13 +141,22 @@ async function loadRoleRegistry(): Promise<RoleRegistry> {
 }
 
 async function loadAgentRegistry(): Promise<AgentRegistry> {
-	const filePath = resolveRegistryPath("PI_ACIDBATH_AGENTS_PATH", "config/agents.example.json");
-	try {
-		const raw = await readJsonFile(filePath);
-		return parseAgentRegistry(raw);
-	} catch {
-		return defaultAgentRegistry();
+	const override = process.env.PI_ACIDBATH_AGENTS_PATH;
+	// A user roster wins over the shipped example, which documents the
+	// builtin-only defaults. Builtin profiles stay builtin; build-capable
+	// profiles live in the user file so they are never silently defaulted on.
+	const candidates = override
+		? [override]
+		: ["config/agents.json", "config/agents.example.json"];
+	for (const candidate of candidates) {
+		try {
+			const raw = await readJsonFile(path.resolve(process.cwd(), candidate));
+			return parseAgentRegistry(raw);
+		} catch {
+			continue;
+		}
 	}
+	return defaultAgentRegistry();
 }
 
 // ─── state persistence ─────────────────────────────────────────────────
