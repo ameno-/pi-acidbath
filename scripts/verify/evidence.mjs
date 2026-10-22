@@ -39,6 +39,8 @@ export async function buildEvidence({ checks, mutations, corpus }) {
 		"scripts/verify/harness.mjs",
 		"scripts/verify/checks.mjs",
 		"scripts/verify/mutate.mjs",
+		"scripts/verify/live-rex.mjs",
+		"scripts/verify/emit-row.mjs",
 		"scripts/verify/run.mjs",
 	];
 
@@ -111,7 +113,7 @@ export async function buildEvidence({ checks, mutations, corpus }) {
 	};
 	bundle.evidenceHash = sha256(JSON.stringify(claim, null, 2));
 	bundle.digestScope =
-		"revision + working-tree state, renderer source digest, corpus, every check pass/fail, and every mutation caught/not. Excludes timestamps, failure prose, and incidental per-run detail.";
+		"revision + working-tree state, renderer source digest, corpus, every check pass/fail/skip, and every mutation caught/not. Excludes timestamps, failure prose, and incidental per-run detail.";
 	return bundle;
 }
 
@@ -122,7 +124,11 @@ export async function writeEvidence(bundle, outDir = join(ROOT, "evidence")) {
 	await writeFile(jsonPath, `${JSON.stringify(bundle, null, 2)}\n`, "utf8");
 
 	const rows = bundle.checks
-		.map((c) => `| \`${c.id}\` | ${c.result === "pass" ? "✅ pass" : "❌ FAIL"} | ${c.claim} |`)
+		.map((c) => {
+			const badge = c.result === "pass" ? "✅ pass" : c.result === "skip" ? "⏭️ skip" : "❌ FAIL";
+			const reason = c.result === "skip" && c.skipReason ? ` — ${c.skipReason}` : "";
+			return `| \`${c.id}\` | ${badge} | ${c.claim}${reason} |`;
+		})
 		.join("\n");
 	const mutants = bundle.mutations
 		.map((m) => `| \`${m.id}\` | ${m.caught ? "✅ caught" : "❌ SURVIVED"} | \`${m.expectedCheck}\` | ${m.checksThatFired.join(", ") || "—"} |`)
