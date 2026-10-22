@@ -6,12 +6,33 @@ import { isGenericMessage, lyricFor, lyricKind, LYRIC_MAX_VISIBLE_WIDTH, type Ly
 
 export const ACTIVITY_STATUS_WIDGET_KEY = "acidbath-activity-status";
 
-const MAX_PREVIEW_CHARS = 240;
-// Phase advances on real lifecycle events, not on a timer. The minimum
-// interval prevents strobing during fast token-by-token streaming.
-const MIN_PHASE_ADVANCE_MS = 80;
+/**
+ * Preview length for the collapsed thinking block.
+ *
+ * This is a preview, not a transcript. The default used to be 240 characters,
+ * which packed a paragraph of reasoning onto a one-line status rail and made
+ * it the widest, most restless thing on screen.
+ */
+const MAX_PREVIEW_CHARS = intFromEnv("PI_ACIDBATH_THINKING_PREVIEW_CHARS", 72);
+
+/**
+ * Minimum gap between glow-phase advances.
+ *
+ * Phase advances on real lifecycle events, which during token-by-token
+ * thinking arrive continuously. At 80ms that is twelve and a half colour
+ * changes a second across a six-step palette — a strobe, not a pulse. The
+ * default is a calm cadence: the rail breathes rather than flickers.
+ */
+const MIN_PHASE_ADVANCE_MS = intFromEnv("PI_ACIDBATH_THINKING_PHASE_MS", 700);
 const CONTROL_OR_ANSI = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 const GLOW_PHASES = ["dim", "muted", "accent", "bold", "accent", "muted"] as const;
+
+function intFromEnv(name: string, fallback: number): number {
+	const raw = process.env[name];
+	if (typeof raw !== "string" || raw.trim() === "") return fallback;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
 
 export interface ActivityStatusUpdate {
 	visible?: boolean;
@@ -126,6 +147,8 @@ export class AcidbathActivityStatus implements Component {
 		const detail = this.state.reasoningActive
 			? this.state.reasoningPreview || ""
 			: isGenericMessage(this.state.message) ? "" : this.state.message;
+		// Two spaces: the lyric is a label and the detail is content. They need
+	// visible separation even though it costs a column.
 		const detailText = detail ? `  ${this.muted(detail)}` : "";
 
 		const lines = [truncateToWidth(`◇ ${label}${detailText}`, safeWidth)];

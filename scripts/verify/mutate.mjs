@@ -19,10 +19,10 @@ import { runChecks } from "./checks.mjs";
 export const MUTATIONS = [
 	{
 		id: "M1-overflow",
-		bug: "The outer width guard is off by one, so an elided row is allowed to run one column over budget.",
+		bug: "The width guard is dropped entirely, so a line that needs clipping is emitted at full length.",
 		file: "ui-tool-renderers.ts",
 		find: "if (tuiVisibleWidth(line) <= width) return line;",
-		replace: "if (tuiVisibleWidth(line) <= width + 1) return line;",
+		replace: "return line;",
 		expect: "width-safety",
 	},
 	{

@@ -9,7 +9,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { formatToolRow } from "./ui-tool-rows.js";
 import { summarizeToolOutput, targetForTool, type ToolOutputSummary } from "./ui-tool-output.js";
-import { statusGlyph, toolGlyph, animFrame, animFrameCount, STATUS_LUMPY, STATUS_SWAG, STATUS_TOLDYOU, STATUS_GTFO, ANIM_FRAMES } from "./rendering/kaomoji.js";
+import { statusGlyph, toolGlyph, animFrame, animFrameCount, STATUS_LUMPY, ANIM_FRAMES } from "./rendering/kaomoji.js";
 import { subscribe, currentFrame } from "./rendering/motion.js";
 
 type ToolMotionState = "pending" | "success" | "error";
@@ -105,15 +105,24 @@ const ROW_INDENT = "  ";
 /**
  * Fixed-width status and tool cells.
  *
- * The kaomoji glyphs do not all occupy the same columns: (⌐■_■) is six wide
- * while (◕‿◕) is five, and a bash row animates through a six- and a
- * seven-column face. Rendering those raw means the target after them shifts
- * by a column every time the row settles or ticks — the row reflows instead
- * of changing state. Padding each cell to a constant width pins everything
- * to its column, so nothing after the glyph ever moves.
+ * The kaomoji glyphs do not all occupy the same columns: (◕‿◕) is five wide
+ * while (￣▽￣)ノ is nine, and a bash row animates through a five- and a
+ * six-column face. Rendering those raw means the target after them shifts by
+ * a column every time the row settles or ticks — the row reflows instead of
+ * changing state. Padding each cell to a constant width pins everything to
+ * its column, so nothing after the glyph ever moves.
+ *
+ * Only the glyphs a row can actually render set the width. statusGlyph also
+ * returns STATUS_GTFO for "warning", but a tool row's status is pending,
+ * success, or error — padding for GTFO charged four columns to every row in
+ * the transcript for a glyph that never renders there.
  */
 function statusCellWidth(): number {
-	return Math.max(tuiVisibleWidth(STATUS_SWAG), tuiVisibleWidth(STATUS_TOLDYOU), tuiVisibleWidth(STATUS_GTFO), tuiVisibleWidth(STATUS_LUMPY));
+	return Math.max(
+		tuiVisibleWidth(STATUS_LUMPY),
+		tuiVisibleWidth(statusGlyph("success", true)),
+		tuiVisibleWidth(statusGlyph("error", true)),
+	);
 }
 
 function toolCellWidth(toolName: string): number {

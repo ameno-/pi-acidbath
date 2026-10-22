@@ -233,6 +233,45 @@ function checkColumnStability(render) {
 	};
 }
 
+/**
+ * Cell discipline: padding exists to hold a column steady, not to widen the
+ * row. A cell may only be as wide as the widest glyph that can actually
+ * appear in it. Padding a status cell for a glyph no row can render once cost
+ * every row in the transcript four columns of dead space.
+ */
+function checkCellDiscipline(render, { kaomoji }) {
+	const failures = [];
+	const renderable = [
+		kaomoji.STATUS_LUMPY,
+		kaomoji.statusGlyph("success", true),
+		kaomoji.statusGlyph("error", true),
+	];
+	const statusBudget = Math.max(...renderable.map((g) => visibleWidth(g)));
+
+	for (const frame of renderCorpus(render)) {
+		if (caseById(frame.case).spec.noColor) continue;
+		const visible = stripAnsi(frame.lines[0]);
+		// Measure where the target begins: status cell + tool cell + separators.
+		const target = caseById(frame.case).spec.target;
+		const targetAt = columnOf(frame.lines[0], target);
+		if (targetAt < 0) continue;
+		const toolBudget = Math.max(
+			visibleWidth(kaomoji.toolGlyph(caseById(frame.case).spec.toolName)),
+			...(kaomoji.ANIM_FRAMES[caseById(frame.case).spec.toolName] ?? []).map(visibleWidth),
+		);
+		const floor = statusBudget + toolBudget + 2; // two single-space separators
+		if (targetAt < floor - 1) {
+			failures.push(`${frame.id}: target at col ${targetAt}, but the cells only need ${floor} — padding is wider than its glyphs`);
+		}
+	}
+	return {
+		id: "cell-discipline",
+		claim: "A padded cell is never wider than the widest glyph that can render in it, so padding buys stability without costing width.",
+		detail: `status cell budget ${statusBudget} cols (pending ${visibleWidth(kaomoji.STATUS_LUMPY)}, success ${visibleWidth(kaomoji.statusGlyph("success", true))}, error ${visibleWidth(kaomoji.statusGlyph("error", true))})`,
+		failures,
+	};
+}
+
 /** Escape hygiene: colour spans are balanced and wrap only the glyphs. */
 function checkEscapeHygiene(render) {
 	const failures = [];
@@ -288,6 +327,7 @@ export const CHECKS = [
 	checkInPlaceTransition,
 	checkColumnStability,
 	checkGlyphIdentity,
+	checkCellDiscipline,
 	checkEscapeHygiene,
 	checkNoColorPurity,
 ];
