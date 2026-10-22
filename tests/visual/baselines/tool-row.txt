@@ -3,11 +3,11 @@ ACIDBATH TOOL ROWS
 
 (⌐■_■) (￣ω￣) docs/plan.md · 214 lines · expand
 (◕‿◕) (ﾟﾍﾟ) pnpm test --filter acidbath · running · expand
-(￣▽￣)ノ (｡•̀ᴗ-)✧ extensions/acidbath/ui-tool-renderers.ts · old text …
+(￣▽￣)ノ (｡•̀ᴗ-)✧ extensions/acidbath/ui-tool-renderers.ts · old text n…
 
 STATIC NATIVE TRANSCRIPT ROWS
 ────────────────────────────────────────────────────────────────────────
 (⌐■_■) (￣ω￣) docs/plan.md · 214 lines · expand
 (◕‿◕) (ﾟﾍﾟ) pnpm test --filter acidbath · running · expand
-(￣▽￣)ノ (｡•̀ᴗ-)✧ extensions/acidbath/ui-tool-renderers.ts · old text …
+(￣▽￣)ノ (｡•̀ᴗ-)✧ extensions/acidbath/ui-tool-renderers.ts · old text n…
 ────────────────────────────────────────────────────────────────────────
