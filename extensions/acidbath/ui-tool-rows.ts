@@ -1,7 +1,9 @@
 /**
  * Pure, status-first tool-row formatting with kaomoji glyphs.
- * No Pi/TUI/runtime dependencies.
+ * Width calculation delegates to Pi's visibleWidth for character metrics.
  */
+
+import { visibleWidth as piVisibleWidth } from "@earendil-works/pi-tui";
 
 export type ToolRowStatus = "pending" | "success" | "error";
 
@@ -49,7 +51,7 @@ function truncate(value: string, width: number): string {
   let output = "";
   let used = 0;
   for (const character of Array.from(value)) {
-    const next = characterWidth(character);
+    const next = piVisibleWidth(character);
     if (used + next > width - 1) break;
     output += character;
     used += next;
@@ -58,18 +60,5 @@ function truncate(value: string, width: number): string {
 }
 
 export function toolRowVisibleWidth(value: string): number {
-  let width = 0;
-  for (const character of Array.from(value)) width += characterWidth(character);
-  return width;
-}
-
-function characterWidth(character: string): number {
-  const codePoint = character.codePointAt(0) ?? 0;
-  if ((codePoint >= 0x300 && codePoint <= 0x36f) || (codePoint >= 0xfe00 && codePoint <= 0xfe0f)) return 0;
-  // Most kaomoji characters (katakana, hiragana, CJK) are fullwidth
-  if (codePoint >= 0x3040 && codePoint <= 0x9fff) return 2;
-  if (codePoint >= 0x3000 && codePoint <= 0x303f) return 2;
-  if (codePoint >= 0xff00 && codePoint <= 0xffef) return 2;
-  if (codePoint >= 0x1f300 && codePoint <= 0x1faff) return 2;
-  return 1;
+  return piVisibleWidth(value);
 }
