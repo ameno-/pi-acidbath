@@ -6,3 +6,6 @@ package-lock.json
 .dolt/
 *.db
 .beads-credential-key
+
+.verify-tmp/
+evidence/
