@@ -1,6 +1,6 @@
 /** Unified tool renderers with compact summaries and lazy native detail bodies. */
 
-import { truncateToWidth as tuiTruncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth as tuiTruncateToWidth, visibleWidth as tuiVisibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type {
 	Theme,
@@ -9,7 +9,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { formatToolRow } from "./ui-tool-rows.js";
 import { summarizeToolOutput, targetForTool, type ToolOutputSummary } from "./ui-tool-output.js";
-import { statusGlyph, toolGlyph, animFrame, animFrameCount, STATUS_LUMPY } from "./rendering/kaomoji.js";
+import { statusGlyph, toolGlyph, animFrame, animFrameCount, STATUS_LUMPY, STATUS_SWAG, STATUS_TOLDYOU, STATUS_GTFO, ANIM_FRAMES } from "./rendering/kaomoji.js";
 import { subscribe, currentFrame } from "./rendering/motion.js";
 
 type ToolMotionState = "pending" | "success" | "error";
@@ -71,6 +71,125 @@ export interface CompactToolRendererOptions {
 	reducedMotion: boolean;
 }
 
+/** The only theme capability the compact row needs. Keeps rendering testable. */
+export interface ToolRowTheme {
+	fg(color: string, text: string): string;
+}
+
+/**
+ * Everything a tool row renders from, with no ambient state.
+ *
+ * `frame` is injected rather than read from the shared clock so that rendering
+ * is a pure function of its inputs. Production passes currentFrame(); the
+ * verification harness passes an explicit frame index. Same function, same
+ * bytes — that is what makes the harness evidence about real output.
+ */
+export interface ToolRowRenderInput {
+	settled: boolean;
+	status: ToolMotionState;
+	toolName: string;
+	target: string;
+	metadata: readonly string[];
+	hasDetails: boolean;
+	truncated: boolean;
+	errorLine?: string;
+	expanded: boolean;
+	noColor: boolean;
+	theme: ToolRowTheme;
+	frame: number;
+	renderDetails?: (width: number) => string[];
+}
+
+const ROW_INDENT = "  ";
+
+/**
+ * Fixed-width status and tool cells.
+ *
+ * The kaomoji glyphs do not all occupy the same columns: (⌐■_■) is six wide
+ * while (◕‿◕) is five, and a bash row animates through a six- and a
+ * seven-column face. Rendering those raw means the target after them shifts
+ * by a column every time the row settles or ticks — the row reflows instead
+ * of changing state. Padding each cell to a constant width pins everything
+ * to its column, so nothing after the glyph ever moves.
+ */
+function statusCellWidth(): number {
+	return Math.max(tuiVisibleWidth(STATUS_SWAG), tuiVisibleWidth(STATUS_TOLDYOU), tuiVisibleWidth(STATUS_GTFO), tuiVisibleWidth(STATUS_LUMPY));
+}
+
+function toolCellWidth(toolName: string): number {
+	return Math.max(tuiVisibleWidth(toolGlyph(toolName)), ...(ANIM_FRAMES[toolName] ?? []).map(tuiVisibleWidth));
+}
+
+function padCell(glyph: string, width: number): string {
+	const padding = width - tuiVisibleWidth(glyph);
+	return padding > 0 ? `${glyph}${" ".repeat(padding)}` : glyph;
+}
+
+/**
+ * Fit one line to the width budget.
+ *
+ * Pi's truncateToWidth always wraps its result in a reset sequence when it
+ * elides anything, which leaks escape bytes into uncoloured rows and breaks
+ * pipes, logs, and copy-paste. Uncoloured text is therefore truncated with
+ * plain arithmetic and never acquires escapes it did not start with.
+ */
+function fitLine(line: string, width: number, noColor: boolean): string {
+	if (tuiVisibleWidth(line) <= width) return line;
+	return noColor ? truncatePlain(line, width) : tuiTruncateToWidth(line, width, "…");
+}
+
+function truncatePlain(line: string, width: number): string {
+	if (width <= 1) return "…";
+	let out = "";
+	let used = 0;
+	for (const character of Array.from(line)) {
+		const next = tuiVisibleWidth(character);
+		if (used + next > width - 1) break;
+		out += character;
+		used += next;
+	}
+	return `${out}…`;
+}
+
+/** Render one tool row to lines. Pure: same input, same bytes, every time. */
+export function renderToolRowLines(input: ToolRowRenderInput, width: number): string[] {
+	const safeWidth = Math.max(1, Math.trunc(width));
+	const settled = input.settled;
+	const status = input.noColor ? "" : padCell(settled ? statusGlyph(input.status, true) : STATUS_LUMPY, statusCellWidth());
+	const tool = input.noColor ? "" : padCell(settled ? toolGlyph(input.toolName) : animFrame(input.toolName, input.frame), toolCellWidth(input.toolName));
+	const plain = formatToolRow({
+		width: safeWidth,
+		statusGlyph: status,
+		toolGlyph: tool,
+		toolName: input.toolName,
+		target: input.target,
+		status: input.status,
+		metadata: input.metadata,
+		expandable: input.hasDetails || input.truncated,
+		expanded: input.expanded,
+	});
+
+	const lifecycleColor = input.status === "error" ? "error" : input.status === "success" ? "success" : "accent";
+	let styled = plain;
+	if (!input.noColor && status && tool) {
+		const afterTool = plain.slice(status.length + 1 + tool.length);
+		styled = `${input.theme.fg(lifecycleColor, status)} ${input.theme.fg("accent", tool)}${afterTool}`;
+	}
+
+	const lines = [fitLine(styled, safeWidth, input.noColor)];
+	if (!input.expanded && input.status === "error" && input.errorLine) {
+		const diagnostic = `${ROW_INDENT}${input.noColor ? "error: " : input.theme.fg("error", "error: ")}${input.noColor ? input.errorLine : input.theme.fg("toolOutput", input.errorLine)}`;
+		lines.push(fitLine(diagnostic, safeWidth, input.noColor));
+	}
+	if (input.expanded && input.renderDetails) {
+		const detailWidth = Math.max(1, safeWidth - ROW_INDENT.length);
+		for (const line of input.renderDetails(detailWidth)) {
+			lines.push(fitLine(`${ROW_INDENT}${line}`, safeWidth, input.noColor));
+		}
+	}
+	return lines;
+}
+
 class ToolRowComponent implements Component {
 	private readonly row: ToolRowState;
 	private readonly theme: Theme;
@@ -120,40 +239,24 @@ class ToolRowComponent implements Component {
 		const frame = this.row.settled ? 0 : currentFrame();
 		if (this.cachedLines && this.cachedWidth === safeWidth && this.cachedFrame === frame) return this.cachedLines;
 
-		const settled = this.row.settled;
-		const status = this.noColor ? "" : (settled ? statusGlyph(this.row.status, true) : STATUS_LUMPY);
-		const tool = this.noColor ? "" : (settled ? toolGlyph(this.row.toolName) : animFrame(this.row.toolName, frame));
-		const plain = formatToolRow({
-			width: safeWidth,
-			statusGlyph: status,
-			toolGlyph: tool,
-			toolName: this.row.toolName,
-			target: this.row.target,
-			status: this.row.status,
-			metadata: this.row.metadata,
-			expandable: this.row.hasDetails || this.row.truncated,
-			expanded: this.expanded,
-		});
-
-		const lifecycleColor = this.row.status === "error" ? "error" : this.row.status === "success" ? "success" : "accent";
-		let styled = plain;
-		if (!this.noColor && status && tool) {
-			const afterTool = plain.slice(status.length + 1 + tool.length);
-			styled = `${this.theme.fg(lifecycleColor, status)} ${this.theme.fg("accent", tool)}${afterTool}`;
-		}
-
-		const lines = [tuiTruncateToWidth(styled, safeWidth, "…")];
-		const indent = "  ";
-		if (!this.expanded && this.row.status === "error" && this.row.errorLine) {
-			const diagnostic = `${indent}${this.noColor ? "error: " : this.theme.fg("error", "error: ")}${this.noColor ? this.row.errorLine : this.theme.fg("toolOutput", this.row.errorLine)}`;
-			lines.push(tuiTruncateToWidth(diagnostic, safeWidth, "…"));
-		}
-		if (this.expanded && this.details) {
-			const detailWidth = Math.max(1, safeWidth - indent.length);
-			for (const line of this.details.render(detailWidth)) {
-				lines.push(tuiTruncateToWidth(`${indent}${line}`, safeWidth, "…"));
-			}
-		}
+		const lines = renderToolRowLines(
+			{
+				settled: this.row.settled,
+				status: this.row.status,
+				toolName: this.row.toolName,
+				target: this.row.target,
+				metadata: this.row.metadata,
+				hasDetails: this.row.hasDetails,
+				truncated: this.row.truncated,
+				errorLine: this.row.errorLine,
+				expanded: this.expanded,
+				noColor: this.noColor,
+				theme: this.theme,
+				frame,
+				renderDetails: this.details ? (w) => this.details!.render(w) : undefined,
+			},
+			safeWidth,
+		);
 
 		this.cachedWidth = safeWidth;
 		this.cachedFrame = frame;
