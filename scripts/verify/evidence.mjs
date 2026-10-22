@@ -91,12 +91,27 @@ export async function buildEvidence({ checks, mutations, corpus }) {
 	};
 	bundle.verdict.overall = bundle.verdict.checksPassed && bundle.verdict.mutationsCaught ? "PASS" : "FAIL";
 
-	// Self-hash over everything above EXCEPT the timestamp and the hash field
-	// itself, so re-running on unchanged code reproduces the same digest. That
-	// reproducibility is the proof property: a different digest on the same
-	// revision means an input, an assertion, or a source byte moved.
-	const { generatedAt, ...claim } = bundle;
+	// Digest scope: the verdict, not the diagnostics.
+	//
+	// What is hashed is what the evidence CLAIMS — revision, renderer digest,
+	// corpus, each check's pass/fail, and whether each mutation was caught.
+	// Timestamps, failure prose, and incidental details such as which other
+	// checks happened to fire alongside a mutation are deliberately excluded:
+	// they vary between identical runs and would make the digest lie about
+	// whether anything actually changed.
+	const claim = {
+		bundleVersion: BUNDLE_VERSION,
+		code: bundle.code,
+		scope: {
+			corpus: bundle.scope.corpus,
+			rendererDigest: bundle.scope.rendererSource.digest,
+		},
+		checks: checks.map((c) => ({ id: c.id, result: c.pass ? "pass" : "fail" })),
+		mutations: mutations.map((m) => ({ id: m.id, expectedCheck: m.expect, caught: m.caught })),
+	};
 	bundle.evidenceHash = sha256(JSON.stringify(claim, null, 2));
+	bundle.digestScope =
+		"revision + working-tree state, renderer source digest, corpus, every check pass/fail, and every mutation caught/not. Excludes timestamps, failure prose, and incidental per-run detail.";
 	return bundle;
 }
 
