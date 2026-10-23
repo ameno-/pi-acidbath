@@ -29,6 +29,45 @@ UI-focused pieces extracted from `pi-herdr`:
   - `/compactor today` aggregates `/tmp/compact_data/` for the current day.
   - `/compactor reset` clears session stats.
 
+## Decision client (`clef`)
+
+Acidbath ships a **client** of a local decision service — a small model on our
+own GPU that answers cheap, typed questions in ~50 ms. Acidbath hosts no model
+and holds no threshold: the question sets, the thresholds and the graded
+verdicts live in the service, so every surface shares one policy.
+
+Three lifecycle hooks, which MCP cannot express because they intercept Pi
+rather than being called by the model:
+
+- `tool_call` — asks whether a tool call is destructive, and blocks it before Pi runs it
+- `tool_result` — asks whether the result carries injected instructions, and rewrites it when it does
+- `turn_end` — asks whether this is a good moment to compact, and injects a tier as a transient message
+
+And three model-facing tools: `ask_clef` (typed questions over state — the
+code reads the files, so the model never pastes content it did not ask for),
+`should_i_compact`, and `/clef` for status, the thresholds in force and the
+session ledger.
+
+Off by default; `PI_CLEF_ENABLED=1` arms it. **Everything fails open**: if the
+service is unreachable, slow, or answers with something malformed, the
+extension changes no behaviour — commands run, results pass through, nothing is
+injected — and the ledger records that it failed open.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PI_CLEF_ENABLED` | `0` | arm the extension at all |
+| `PI_CLEF_ENDPOINT` | `http://100.88.51.44:8802` | the decision service |
+| `PI_CLEF_MODEL` | `clef-flash` | the model recorded in the ledger |
+| `PI_CLEF_TIMEOUT_MS` | `1500` | client timeout |
+| `PI_CLEF_FAIL_OPEN` | `1` | `0` blocks instead of allowing when the service is down |
+| `PI_CLEF_HOOKS` | all three | armed hooks: `tool_call`, `tool_result`, `turn_end` |
+| `PI_CLEF_MAX_STATE_BYTES` | `65536` | hard cap on the state sent |
+| `PI_CLEF_COMPACT_NOTICE_PCT` | `50` | context usage % that triggers a notice |
+| `PI_CLEF_COMPACT_RECOMMEND_PCT` | `70` | context usage % that recommends compacting |
+| `PI_CLEF_COMPACT_REQUEST_PCT` | `85` | context usage % that requests compaction |
+
+Full detail: [`docs/MIGHT-503-clef-decision-client.md`](docs/MIGHT-503-clef-decision-client.md).
+
 #### Compactor configuration
 
 | Env var | Default | Purpose |
