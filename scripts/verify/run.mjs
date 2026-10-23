@@ -10,9 +10,10 @@
 
 import { join } from "node:path";
 import { loadRenderer, renderCorpus, ROOT } from "./harness.mjs";
-import { runChecks } from "./checks.mjs";
+import { runChecks, railNoLayoutHopCheck } from "./checks.mjs";
 import { runMutationSuite } from "./mutate.mjs";
 import { checkLiveCapture, comparatorSelfTest } from "./live-rex.mjs";
+import * as rail from "../../extensions/acidbath/ui-activity-status.ts";
 import { buildEvidence, writeEvidence } from "./evidence.mjs";
 
 const mark = (pass) => (pass ? "PASS" : "FAIL");
@@ -23,7 +24,7 @@ async function main() {
 	const loaded = await loadRenderer(sourceDir);
 	const corpus = renderCorpus(loaded.render);
 
-	const checks = runChecks(loaded);
+	const checks = [...runChecks(loaded), railNoLayoutHopCheck(rail)];
 
 	console.log("\nTUI verification — compact tool row\n");
 	for (const check of checks) {

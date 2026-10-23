@@ -272,6 +272,52 @@ function checkCellDiscipline(render, { kaomoji }) {
 	};
 }
 
+/**
+ * No layout hop: the activity rail's geometry must not depend on its content.
+ *
+ * The rail mixes fixed content (a lyric we choose) with unstable content (the
+ * reasoning tail, rewritten on every streamed token). When they share a line
+ * the unstable half moves the stable half, and near the wrap boundary the line
+ * count flips and everything below jumps. So the rail is swept with previews
+ * from empty to 600 characters, including embedded newlines and ANSI: the
+ * head must never move and the height must never change.
+ */
+export function railNoLayoutHopCheck(rail) {
+	const { renderRailLines } = rail;
+	const previews = [
+		"", "x", "short thought", "x".repeat(72), "x".repeat(200), "x".repeat(600),
+		"multi\nline\nreasoning", "\u001b[31mescaped\u001b[0m", "　　fullwidth ideographic space",
+	];
+	const failures = [];
+	const heads = new Set();
+	const heights = new Set();
+
+	for (const width of [20, 40, 72, 80, 120, 200]) {
+		for (const preview of previews) {
+			if (!preview) continue;
+			const lines = renderRailLines("reasoning", preview, width, { layout: "two-line" });
+			heads.add(lines[0]);
+			heights.add(lines.length);
+			for (const [index, line] of lines.entries()) {
+				const measured = visibleWidth(line);
+				if (measured > width) failures.push(`w${width} preview ${preview.length}: line ${index} is ${measured} cols`);
+			}
+			if (lines.length !== 2) failures.push(`w${width} preview ${preview.length}: rendered ${lines.length} lines, expected 2`);
+		}
+	}
+
+	if (heads.size !== 1) failures.push(`head changed across ${heads.size} distinct values`);
+	if (heights.size !== 1) failures.push(`height changed: ${[...heights].join(", ")}`);
+
+	return {
+		id: "rail-no-layout-hop",
+		claim: "While reasoning streams, the rail keeps one fixed head line and one fixed slot line. Content changes; geometry never does.",
+		detail: `swept ${previews.length} preview shapes x 6 widths; head ${JSON.stringify([...heads][0])}`,
+		failures,
+		pass: failures.length === 0,
+	};
+}
+
 /** Escape hygiene: colour spans are balanced and wrap only the glyphs. */
 function checkEscapeHygiene(render) {
 	const failures = [];

@@ -34,6 +34,44 @@ function intFromEnv(name: string, fallback: number): number {
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+const RAIL_PREFIX = "◇ ";
+const DETAIL_INDENT = "  ";
+
+/**
+ * Layout for the activity rail.
+ *
+ * The rail mixes two kinds of content with opposite natures: the lyric is ours
+ * and stable, the reasoning tail is not and changes on every streamed token.
+ * Sharing one line lets the unstable half push the stable half around, and
+ * near the wrap boundary the line count flips and everything below it jumps.
+ *
+ * So they get separate lines. Line one holds fixed content only and never
+ * moves. The reasoning gets its own clipped slot on line two, which is always
+ * exactly one line: elided to fit, never wrapped. The rail's geometry is
+ * therefore constant while reasoning runs; only its text changes.
+ */
+export type ThinkingLayout = "two-line" | "inline";
+
+export function railLayout(): ThinkingLayout {
+	return process.env.PI_ACIDBATH_THINKING_LAYOUT === "inline" ? "inline" : "two-line";
+}
+
+/** Pure render of the rail: label, detail and width to lines. */
+export function renderRailLines(
+	label: string,
+	detail: string,
+	width: number,
+	style: { layout: ThinkingLayout },
+): string[] {
+	const safeWidth = Math.max(1, Math.trunc(width));
+	const head = truncateToWidth(`${RAIL_PREFIX}${label}`, safeWidth);
+	if (!detail) return [head];
+	if (style.layout === "inline") return [truncateToWidth(`${head}${DETAIL_INDENT}${detail}`, safeWidth)];
+	const slot = safeWidth - DETAIL_INDENT.length;
+	if (slot <= 0) return [head];
+	return [head, truncateToWidth(`${DETAIL_INDENT}${detail}`, safeWidth)];
+}
+
 export interface ActivityStatusUpdate {
 	visible?: boolean;
 	kind?: string;
@@ -147,11 +185,9 @@ export class AcidbathActivityStatus implements Component {
 		const detail = this.state.reasoningActive
 			? this.state.reasoningPreview || ""
 			: isGenericMessage(this.state.message) ? "" : this.state.message;
-		// Two spaces: the lyric is a label and the detail is content. They need
-	// visible separation even though it costs a column.
-		const detailText = detail ? `  ${this.muted(detail)}` : "";
-
-		const lines = [truncateToWidth(`◇ ${label}${detailText}`, safeWidth)];
+		const lines = renderRailLines(label, detail, safeWidth, {
+			layout: railLayout(),
+		});
 		this.cachedWidth = safeWidth;
 		this.cachedLines = lines;
 		return lines;
