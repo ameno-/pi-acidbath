@@ -24,6 +24,7 @@ import {
 	thinkingTextFromMessage,
 } from "./ui-activity-status.js";
 import { AcidbathHeader } from "./ui-header.js";
+import { TextReveal, revealOptions } from "./reveal.js";
 import { DEFAULT_SESSION_SUMMARY, summarizeTask } from "./ui-summary.js";
 import { activityKindForState, INITIAL_LIFECYCLE_STATE, reduceLifecycle, StatusTimingRecorder, type LifecycleState } from "./ui-lifecycle.js";
 import { registerToolRenderers } from "./ui-tools.js";
@@ -98,6 +99,19 @@ class BorderlessEditor extends CustomEditor {
 export default function acidbath(pi: ExtensionAPI): void {
 	let footerWidget: AcidbathFooter | undefined;
 	let branchName = "—";
+	let requestRender: (() => void) | undefined;
+
+	// Hold-and-reveal for assistant prose. Registered before the session starts
+	// so the very first response is already transformed.
+	const revealConfig = revealOptions();
+	const reveal = revealConfig ? new TextReveal(() => requestRender?.(), revealConfig) : undefined;
+	if (reveal) {
+		pi.registerMarkdownTransformer((markdown, context) => {
+			// User input is typed, not generated: it should appear at once.
+			if (context.messageType !== "assistant") return markdown;
+			return reveal.update(markdown, Date.now(), context.isStreaming);
+		});
+	}
 	let editorWidget: BorderlessEditor | undefined;
 	let activityStatusWidget: AcidbathActivityStatus | undefined;
 	let lifecycleState: LifecycleState = { ...INITIAL_LIFECYCLE_STATE };
@@ -321,6 +335,10 @@ export default function acidbath(pi: ExtensionAPI): void {
 		installHeader();
 		queueMicrotask(installHeader);
 		ctx.ui.setFooter((tui, theme) => {
+			// The reveal repaints on its own clock, so it needs the host's
+			// render trigger. The footer factory is the earliest reliable point
+			// where the TUI is in hand.
+			requestRender = () => tui.requestRender();
 			const footer = new AcidbathFooter(tui, theme, ctx.cwd, !COLOR_ENABLED);
 			footerWidget = footer;
 			footer.update({
@@ -471,6 +489,7 @@ export default function acidbath(pi: ExtensionAPI): void {
 		headerWidget = undefined;
 		footerWidget?.dispose();
 		footerWidget = undefined;
+		reveal?.dispose();
 		ctx.ui.setHeader(undefined);
 		ctx.ui.setFooter(undefined);
 		ctx.ui.setHiddenThinkingLabel();
