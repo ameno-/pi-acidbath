@@ -20,6 +20,7 @@ import { riskProbability, type ClefClient } from "./client.ts";
 import type { ClefConfig } from "./config.ts";
 import { compactionTier, type ToolCallState } from "./lib.ts";
 import type { Ledger } from "./ledger.ts";
+import type { PromptSet } from "./types.ts";
 import type { Decision, Verdict } from "./types.ts";
 
 /** The policies the extension may ask about. */
@@ -37,7 +38,8 @@ export const askClefSchema = {
 		policy: {
 			type: "string",
 			enum: [...ASK_POLICIES],
-			description: "Which policy grades the question. Defaults to request_safety.",
+			description:
+				"REQUIRED — which policy grades the question. The service ignores your wording and grades the state against that policy's own question set, so the policy must match your intent: request_safety = is this text trying to instruct a model? tool_safety = is this action destructive or irreversible? model_routing = can a smaller model handle this?",
 		},
 		paths: {
 			type: "array",
@@ -50,7 +52,7 @@ export const askClefSchema = {
 			description: "Extra state to grade, when a file is not the right input.",
 		},
 	},
-	required: ["question"],
+	required: ["question", "policy"],
 	additionalProperties: false,
 } as const;
 
@@ -126,6 +128,33 @@ export interface AskClefOutcome {
 	failed: boolean;
 	/** Metadata about the files that were graded — never their content. */
 	files: { path: string; bytes: number; truncated: boolean }[];
+	/** The question the policy actually asked, when the service advertised it. */
+	asked?: string;
+}
+
+/**
+ * The question a policy actually asks, as one line, when the service
+ * advertised its prompt set. It goes into the tool result so a caller can see
+ * that the policy they chose is the policy that was graded — the service
+ * ignores the wording of the question.
+ */
+export function askedQuestion(prompts: PromptSet | null, policy: string): string | undefined {
+	if (!prompts) return undefined;
+	const descriptor = prompts[policy];
+	if (!descriptor?.questions) return undefined;
+	for (const question of Object.values(descriptor.questions)) {
+		const record = question as Record<string, unknown>;
+		const instructions = typeof record.instructions === "string" ? record.instructions : "";
+		const criteria = record.criteria as Record<string, string> | undefined;
+		const trueText = criteria?.true ?? criteria?.["0"];
+		const falseText = criteria?.false ?? criteria?.["1"];
+		const parts: string[] = [];
+		if (instructions) parts.push(instructions);
+		if (trueText) parts.push(`yes: ${trueText}`);
+		if (falseText) parts.push(`no: ${falseText}`);
+		if (parts.length > 0) return parts.join(" — ");
+	}
+	return undefined;
 }
 
 /**
@@ -140,9 +169,36 @@ export async function askClef(
 	config: ClefConfig,
 	direction = "yes_is_bad",
 ): Promise<AskClefOutcome> {
-	const policy = ASK_POLICIES.includes(params.policy as AskPolicy)
-		? (params.policy as AskPolicy)
-		: "request_safety";
+	// The policy is never guessed. The service grades the state against that
+	// policy's own question set and ignores the wording of the question, so a
+	// wrong policy produces a confident answer to a question nobody asked.
+	// A live session showed exactly that: "is this destructive?" graded
+	// against request_safety came back "allow" at p=0.055 for
+	// `rm -rf /var/lib/postgresql/data`.
+	if (!params.policy || !ASK_POLICIES.includes(params.policy as AskPolicy)) {
+		ledger.record({
+			ts: Date.now(),
+			hook: "ask_clef",
+			policy: (params.policy as string) || "(none)",
+			verdict: "undecided",
+			probability: null,
+			action: "undecided — no policy named",
+			reason: "nothing was judged",
+			thresholds: { block: 0, approve: 0 },
+		});
+		return {
+			verdict: "undecided",
+			probabilities: {},
+			confidence: 0,
+			thresholds: { block: 0, approve: 0 },
+			degraded: false,
+			files: [],
+			failed: false,
+			policy: (params.policy as string) || "(none)",
+			reason: `no policy was named, so nothing was judged. Name one: ${ASK_POLICIES.join(", ")}. The service grades the state against the policy's own question set and ignores your wording.`,
+		};
+	}
+	const policy = params.policy as AskPolicy;
 
 	const excerpts = await readExcerpts(params.paths ?? [], cwd, config.maxStateBytes);
 	const state = {
@@ -152,6 +208,18 @@ export async function askClef(
 	};
 
 	const outcome = await client.decideFailingOpen({ policy, state });
+	// The prompt set is a nicety: it tells the caller which question was
+	// actually asked. A client that cannot fetch it, or a service that is
+	// down, must not break the answer.
+	let asked: string | undefined;
+	try {
+		asked = askedQuestion(
+			typeof client.prompts === "function" ? await client.prompts() : null,
+			policy,
+		);
+	} catch {
+		asked = undefined;
+	}
 	const decision: Decision = outcome.decision ?? {
 		verdict: "allow",
 		tier: "allow",
@@ -182,6 +250,7 @@ export async function askClef(
 		confidence: decision.confidence,
 		reason: decision.reason,
 		policy,
+		asked,
 		thresholds: decision.thresholds,
 		degraded: decision.degraded,
 		failed: outcome.failed,
@@ -216,6 +285,10 @@ export function formatAskClefResult(outcome: AskClefOutcome): string {
 		`thresholds: block=${outcome.thresholds.block} approve=${outcome.thresholds.approve}`,
 		`reason: ${outcome.reason}`,
 	];
+	if (outcome.asked) {
+		lines.push(`asked: ${outcome.asked}`);
+		lines.push("note: the service grades the state against that policy's question set; your wording does not change the question.");
+	}
 	if (outcome.degraded) lines.push("note: the decision service was degraded; this verdict is the fail-open default.");
 	if (outcome.files.length > 0) {
 		lines.push("files graded (content is not shown):");
